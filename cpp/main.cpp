@@ -14,6 +14,8 @@
 #define WM_TRAYICON (WM_USER + 1)
 #define ID_TRAY_EXIT 1001
 #define ID_TRAY_CHANGE_WALLPAPER 1002
+#define ID_TRAY_MUTE 1003
+#define ID_TRAY_MUTE 1003
 
 HWND g_workerw = nullptr;
 HWND g_shellViewHost = nullptr;
@@ -28,6 +30,7 @@ libvlc_media_player_t* g_player = nullptr;
 libvlc_media_t* g_media = nullptr;
 
 NOTIFYICONDATA g_nid = { };
+bool g_muted = false;
 
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 BOOL CALLBACK EnumWindowsProc(HWND hwnd, LPARAM lParam);
@@ -276,6 +279,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR pCmdLine, int nCmdShow
 	libvlc_media_list_player_set_playback_mode(g_listPlayer, libvlc_playback_mode_loop);
 	libvlc_media_list_player_play(g_listPlayer);
 	libvlc_audio_set_volume(g_player, 100);
+	libvlc_audio_set_mute(g_player, g_muted ? 1 : 0);
 
 	ShowWindow(hwnd, SW_SHOWNA);
 	DebugWindowState(L"Renderer after ShowWindow", hwnd, workerw);
@@ -350,12 +354,13 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 
 	case WM_TRAYICON:
 	{
-		if (lParam == WM_RBUTTONUP)
+     if (lParam == WM_LBUTTONUP || lParam == WM_RBUTTONUP)
 		{
 			POINT pt;
 			GetCursorPos(&pt);
 
 			HMENU hMenu = CreatePopupMenu();
+            AppendMenu(hMenu, MF_STRING | (g_muted ? MF_CHECKED : MF_UNCHECKED), ID_TRAY_MUTE, L"Mute");
 			AppendMenu(hMenu, MF_STRING, ID_TRAY_CHANGE_WALLPAPER, L"Change Wallpaper");
 			AppendMenu(hMenu, MF_STRING, ID_TRAY_EXIT, L"Exit");
 
@@ -376,6 +381,15 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 			if (cmd == ID_TRAY_EXIT)
 			{
 				DestroyWindow(hwnd);
+				return 0;
+			}
+            if (cmd == ID_TRAY_MUTE)
+			{
+				g_muted = !g_muted;
+				if (g_player)
+				{
+					libvlc_audio_set_mute(g_player, g_muted ? 1 : 0);
+				}
 				return 0;
 			}
 			if (cmd == ID_TRAY_CHANGE_WALLPAPER)
@@ -620,6 +634,7 @@ HRESULT PlayWallpaperPath(PCWSTR path)
 	libvlc_media_list_player_play(g_listPlayer);
 
 	libvlc_audio_set_volume(g_player, 100);
+	libvlc_audio_set_mute(g_player, g_muted ? 1 : 0);
 
     if (g_mediaList)
 	{
