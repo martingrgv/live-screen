@@ -22,6 +22,8 @@ HWND g_progman = nullptr;
 bool g_raisedDesktop = false;
 
 libvlc_instance_t* g_vlc = nullptr;
+libvlc_media_list_player_t* g_listPlayer = nullptr;
+libvlc_media_list_t* g_mediaList = nullptr;
 libvlc_media_player_t* g_player = nullptr;
 libvlc_media_t* g_media = nullptr;
 
@@ -220,7 +222,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR pCmdLine, int nCmdShow
 
 	g_media = libvlc_media_new_path(
 		g_vlc,
-		R"(C:\Users\marti\Downloads\skyrim_wallpaper.mp4)");
+		R"(C:\Users\marti\Downloads\samurai_wallpaper.mp4)");
 
 	if (!g_media)
 	{
@@ -229,8 +231,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR pCmdLine, int nCmdShow
 		return 0;
 	}
 
-	g_player = libvlc_media_player_new_from_media(g_media);
-	if (!g_player)
+ g_mediaList = libvlc_media_list_new(g_vlc);
+	if (!g_mediaList)
 	{
 		libvlc_media_release(g_media);
 		libvlc_release(g_vlc);
@@ -239,8 +241,40 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR pCmdLine, int nCmdShow
 		return 0;
 	}
 
+	libvlc_media_list_add_media(g_mediaList, g_media);
+
+	g_player = libvlc_media_player_new(g_vlc);
+	if (!g_player)
+	{
+      libvlc_media_list_release(g_mediaList);
+		libvlc_media_release(g_media);
+		libvlc_release(g_vlc);
+      g_mediaList = nullptr;
+		g_media = nullptr;
+		g_vlc = nullptr;
+		return 0;
+	}
+
 	libvlc_media_player_set_hwnd(g_player, hwnd);
-	libvlc_media_player_play(g_player);
+
+	g_listPlayer = libvlc_media_list_player_new(g_vlc);
+	if (!g_listPlayer)
+	{
+		libvlc_media_player_release(g_player);
+		libvlc_media_list_release(g_mediaList);
+		libvlc_media_release(g_media);
+		libvlc_release(g_vlc);
+		g_player = nullptr;
+		g_mediaList = nullptr;
+		g_media = nullptr;
+		g_vlc = nullptr;
+		return 0;
+	}
+
+	libvlc_media_list_player_set_media_player(g_listPlayer, g_player);
+	libvlc_media_list_player_set_media_list(g_listPlayer, g_mediaList);
+	libvlc_media_list_player_set_playback_mode(g_listPlayer, libvlc_playback_mode_loop);
+	libvlc_media_list_player_play(g_listPlayer);
 	libvlc_audio_set_volume(g_player, 100);
 
 	ShowWindow(hwnd, SW_SHOWNA);
@@ -269,6 +303,13 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 
 	case WM_DESTROY:
 	{
+       if (g_listPlayer)
+		{
+			libvlc_media_list_player_stop(g_listPlayer);
+			libvlc_media_list_player_release(g_listPlayer);
+			g_listPlayer = nullptr;
+		}
+
 		if (g_player)
 		{
 			libvlc_media_player_stop(g_player);
@@ -283,6 +324,12 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 		{
 			InvalidateRect(repaintTarget, nullptr, TRUE);
 			UpdateWindow(repaintTarget);
+		}
+
+        if (g_mediaList)
+		{
+			libvlc_media_list_release(g_mediaList);
+			g_mediaList = nullptr;
 		}
 
 		if (g_media)
@@ -535,7 +582,7 @@ done:
 
 HRESULT PlayWallpaperPath(PCWSTR path)
 {
-	if (!g_vlc || !g_player || !path || !*path)
+ if (!g_vlc || !g_player || !g_listPlayer || !path || !*path)
 	{
 		return E_INVALIDARG;
 	}
@@ -558,22 +605,33 @@ HRESULT PlayWallpaperPath(PCWSTR path)
 		return E_FAIL;
 	}
 
-	libvlc_media_player_stop(g_player);
-	libvlc_media_player_set_media(g_player, newMedia);
-
-	if (libvlc_media_player_play(g_player) != 0)
+  libvlc_media_list_t* newMediaList = libvlc_media_list_new(g_vlc);
+	if (!newMediaList)
 	{
 		libvlc_media_release(newMedia);
 		return E_FAIL;
 	}
 
+ libvlc_media_list_add_media(newMediaList, newMedia);
+
+    libvlc_media_list_player_stop(g_listPlayer);
+	libvlc_media_list_player_set_media_list(g_listPlayer, newMediaList);
+	libvlc_media_list_player_set_playback_mode(g_listPlayer, libvlc_playback_mode_loop);
+	libvlc_media_list_player_play(g_listPlayer);
+
 	libvlc_audio_set_volume(g_player, 100);
+
+    if (g_mediaList)
+	{
+		libvlc_media_list_release(g_mediaList);
+	}
 
 	if (g_media)
 	{
 		libvlc_media_release(g_media);
 	}
 
+ g_mediaList = newMediaList;
 	g_media = newMedia;
 	return S_OK;
 }
