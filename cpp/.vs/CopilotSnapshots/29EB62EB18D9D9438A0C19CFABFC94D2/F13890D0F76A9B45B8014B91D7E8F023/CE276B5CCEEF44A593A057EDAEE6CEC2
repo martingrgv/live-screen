@@ -1,0 +1,298 @@
+﻿// TODO: audio from video doesn't work
+#include <windows.h>
+#include <winuser.h>
+#include <strsafe.h>
+#include <vlc/vlc.h>
+
+HWND g_workerw = nullptr;
+HWND g_shellViewHost = nullptr;
+
+libvlc_instance_t* g_vlc = nullptr;
+libvlc_media_player_t* g_player = nullptr;
+libvlc_media_t* g_media = nullptr;
+
+BOOL CALLBACK EnumWindowsProc(HWND hwnd, LPARAM lParam);
+BOOL CALLBACK FindEmptyWorkerWProc(HWND hwnd, LPARAM lParam);
+HWND GetWorkerW();
+void DebugWindowState(const wchar_t* name, HWND hwnd, HWND expectedParent);
+LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
+
+int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR pCmdLine, int nCmdShow)
+{
+	const wchar_t* CLASS_NAME = L"Live Screen Window Class";
+
+	WNDCLASS wc = { };
+
+	wc.lpfnWndProc = WindowProc;
+	wc.hInstance = hInstance;
+	wc.lpszClassName = CLASS_NAME;
+
+	MONITORINFO mi = { };
+	mi.cbSize = sizeof(mi);
+
+	HMONITOR hmon = MonitorFromPoint(POINT{ 0, 0, }, MONITOR_DEFAULTTOPRIMARY);
+	if (!GetMonitorInfo(hmon, &mi))
+	{
+		return 0;
+	}
+
+	int x = mi.rcMonitor.left;
+	int y = mi.rcMonitor.top;
+	int width = mi.rcMonitor.right - mi.rcMonitor.left;
+	int height = mi.rcMonitor.bottom - mi.rcMonitor.top;
+
+ RegisterClass(&wc);
+
+	HWND workerw = GetWorkerW();
+  DebugWindowState(L"WorkerW", workerw, nullptr);
+	DWORD style = workerw ? WS_CHILD | WS_VISIBLE : WS_POPUP | WS_VISIBLE;
+
+	HWND hwnd = CreateWindowEx(
+		WS_EX_TOOLWINDOW, // Hides from Alt-Tab and taskbar
+		CLASS_NAME,
+		L"Live Screen - Renderer",
+      style,
+		x,
+		y,
+		width,
+		height,
+        workerw,
+		nullptr,
+		hInstance,
+		nullptr);
+
+	if (hwnd == NULL)
+	{
+		return 0;
+	}
+
+	DebugWindowState(L"Renderer after CreateWindowEx", hwnd, workerw);
+
+	if (workerw)
+	{
+		SetParent(hwnd, workerw);
+		SetWindowLongPtr(hwnd, GWL_STYLE, WS_CHILD | WS_VISIBLE);
+		SetWindowPos(
+			hwnd,
+            HWND_BOTTOM,
+			0,
+			0,
+			width,
+			height,
+         SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED);
+
+		DebugWindowState(L"Renderer after SetParent", hwnd, workerw);
+	}
+
+	g_vlc = libvlc_new(0, nullptr);
+	if (!g_vlc)
+	{
+		return 0;
+	}
+
+	g_media = libvlc_media_new_path(
+		g_vlc,
+		R"(C:\Users\marti\Downloads\skyrim_wallpaper.mp4)");
+
+	if (!g_media)
+	{
+		libvlc_release(g_vlc);
+		g_vlc = nullptr;
+		return 0;
+	}
+
+	g_player = libvlc_media_player_new_from_media(g_media);
+	if (!g_player)
+	{
+		libvlc_media_release(g_media);
+		libvlc_release(g_vlc);
+		g_media = nullptr;
+		g_vlc = nullptr;
+		return 0;
+	}
+
+	libvlc_media_player_set_hwnd(g_player, hwnd);
+	libvlc_audio_set_volume(g_player, 50);
+	libvlc_media_player_play(g_player);
+
+	ShowWindow(hwnd, nCmdShow);
+
+	MSG msg = { };
+
+	while (GetMessageW(&msg, nullptr, 0, 0) > 0)
+	{
+		TranslateMessage(&msg);
+		DispatchMessage(&msg);
+	}
+
+	return 0;
+}
+
+LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
+{
+	switch (uMsg)
+	{
+	case WM_DESTROY:
+		if (g_player)
+		{
+			libvlc_media_player_stop(g_player);
+			libvlc_media_player_release(g_player);
+			g_player = nullptr;
+		}
+
+		if (g_media)
+		{
+			libvlc_media_release(g_media);
+			g_media = nullptr;
+		}
+
+		if (g_vlc)
+		{
+			libvlc_release(g_vlc);
+			g_vlc = nullptr;
+		}
+
+		PostQuitMessage(0);
+		return 0;
+	}
+
+	return DefWindowProcW(hwnd, uMsg, wParam, lParam);
+}
+
+void DebugWindowState(const wchar_t* name, HWND hwnd, HWND expectedParent)
+{
+	wchar_t className[256] = { };
+	wchar_t parentClassName[256] = { };
+	wchar_t buffer[1024] = { };
+	RECT rect = { };
+
+	HWND parent = hwnd ? GetParent(hwnd) : nullptr;
+	LONG_PTR style = hwnd ? GetWindowLongPtr(hwnd, GWL_STYLE) : 0;
+	LONG_PTR exStyle = hwnd ? GetWindowLongPtr(hwnd, GWL_EXSTYLE) : 0;
+	BOOL visible = hwnd ? IsWindowVisible(hwnd) : FALSE;
+	BOOL childOfExpectedParent = hwnd && expectedParent ? IsChild(expectedParent, hwnd) : FALSE;
+	BOOL parentMatches = parent == expectedParent;
+
+	if (hwnd)
+	{
+		GetClassNameW(hwnd, className, ARRAYSIZE(className));
+		GetWindowRect(hwnd, &rect);
+	}
+
+	if (parent)
+	{
+		GetClassNameW(parent, parentClassName, ARRAYSIZE(parentClassName));
+	}
+
+	StringCchPrintfW(
+		buffer,
+		ARRAYSIZE(buffer),
+		L"%s: hwnd=%p class=%s parent=%p parentClass=%s expectedParent=%p parentMatches=%d isChild=%d visible=%d style=0x%Ix exStyle=0x%Ix rect=(%ld,%ld)-(%ld,%ld)\r\n",
+		name,
+		hwnd,
+		className,
+		parent,
+		parentClassName,
+		expectedParent,
+		parentMatches,
+		childOfExpectedParent,
+		visible,
+		style,
+		exStyle,
+		rect.left,
+		rect.top,
+		rect.right,
+		rect.bottom);
+
+	OutputDebugStringW(buffer);
+}
+
+BOOL CALLBACK EnumWindowsProc(HWND hwnd, LPARAM lParam)
+{
+  HWND shellView = FindWindowEx(hwnd, nullptr, L"SHELLDLL_DefView", nullptr);
+
+	if (shellView != nullptr)
+	{
+       g_shellViewHost = hwnd;
+		return FALSE;
+	}
+
+	return TRUE;
+}
+
+BOOL CALLBACK FindEmptyWorkerWProc(HWND hwnd, LPARAM lParam)
+{
+	wchar_t className[256] = { };
+	GetClassNameW(hwnd, className, ARRAYSIZE(className));
+
+	if (lstrcmpW(className, L"WorkerW") == 0 && FindWindowEx(hwnd, nullptr, L"SHELLDLL_DefView", nullptr) == nullptr)
+	{
+		g_workerw = hwnd;
+		return FALSE;
+	}
+
+	return TRUE;
+}
+
+HWND GetWorkerW()
+{
+   g_workerw = nullptr;
+	g_shellViewHost = nullptr;
+
+	HWND progman = FindWindow(L"Progman", nullptr);
+	if (!progman)
+	{
+		return nullptr;
+	}
+
+	DWORD_PTR result = 0;
+
+	SendMessageTimeout(
+		progman,
+      0x052C,
+		0,
+		0,
+		SMTO_NORMAL,
+		1000,
+		&result);
+
+	SendMessageTimeout(
+		progman,
+		0x052C,
+		0xD,
+		0,
+		SMTO_NORMAL,
+		1000,
+		&result);
+
+	SendMessageTimeout(
+		progman,
+		0x052C,
+		0xD,
+		1,
+		SMTO_NORMAL,
+		1000,
+		&result);
+
+	EnumWindows(EnumWindowsProc, 0);
+	DebugWindowState(L"Shell view host", g_shellViewHost, nullptr);
+
+ if (g_shellViewHost)
+	{
+      g_workerw = FindWindowEx(nullptr, g_shellViewHost, L"WorkerW", nullptr);
+		if (g_workerw && FindWindowEx(g_workerw, nullptr, L"SHELLDLL_DefView", nullptr) != nullptr)
+		{
+            g_workerw = nullptr;
+		}
+	}
+
+	if (!g_workerw)
+	{
+		EnumWindows(FindEmptyWorkerWProc, 0);
+	}
+
+	DebugWindowState(L"Selected WorkerW", g_workerw, nullptr);
+
+	return g_workerw;
+}
+

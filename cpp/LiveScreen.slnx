@@ -1,0 +1,7 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="LiveScreen.vcxproj" Id="757511c5-b386-411a-a153-9cdcf281836d" />
+</Solution>

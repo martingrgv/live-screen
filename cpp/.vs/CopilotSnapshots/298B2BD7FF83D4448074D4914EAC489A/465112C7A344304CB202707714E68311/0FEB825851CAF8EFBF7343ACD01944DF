@@ -1,0 +1,326 @@
+﻿// TODO: audio from video doesn't work
+#include <windows.h>
+#include <winuser.h>
+#include <strsafe.h>
+#include <shellscalingapi.h>
+#include <vlc/vlc.h>
+
+#pragma comment(lib, "Shcore.lib")
+#pragma comment(lib, "User32.lib")
+
+HWND g_workerw = nullptr;
+HWND g_shellViewHost = nullptr;
+
+libvlc_instance_t* g_vlc = nullptr;
+libvlc_media_player_t* g_player = nullptr;
+libvlc_media_t* g_media = nullptr;
+
+BOOL CALLBACK EnumWindowsProc(HWND hwnd, LPARAM lParam);
+BOOL CALLBACK FindFallbackWorkerWProc(HWND hwnd, LPARAM lParam);
+BOOL CALLBACK DebugDesktopWindowsProc(HWND hwnd, LPARAM lParam);
+HWND GetWorkerW();
+void DebugWindowState(const wchar_t* name, HWND hwnd, HWND expectedParent);
+LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
+
+int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR pCmdLine, int nCmdShow)
+{
+	// Match physical pixels so our window size aligns with WorkerW (which is in physical pixels).
+	// Try Per-Monitor V2 first; fall back to system DPI awareness on older Windows.
+	if (!SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2))
+	{
+		SetProcessDpiAwareness(PROCESS_PER_MONITOR_DPI_AWARE);
+	}
+
+	const wchar_t* CLASS_NAME = L"Live Screen Window Class";
+
+	WNDCLASS wc = { };
+
+	wc.lpfnWndProc = WindowProc;
+	wc.hInstance = hInstance;
+	wc.lpszClassName = CLASS_NAME;
+	// Black background avoids a white flash / leftover white area in letterboxed regions.
+	wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
+
+	RegisterClass(&wc);
+
+	HWND workerw = GetWorkerW();
+	DebugWindowState(L"WorkerW", workerw, nullptr);
+
+	int x = 0;
+	int y = 0;
+	int width = 0;
+	int height = 0;
+
+	if (workerw)
+	{
+		// Match WorkerW exactly so we cover the full desktop, including multi-monitor setups.
+		RECT wr = { };
+		GetClientRect(workerw, &wr);
+		width = wr.right - wr.left;
+		height = wr.bottom - wr.top;
+	}
+	else
+	{
+		// Fallback: cover the primary monitor as a top-level popup.
+		MONITORINFO mi = { };
+		mi.cbSize = sizeof(mi);
+		HMONITOR hmon = MonitorFromPoint(POINT{ 0, 0 }, MONITOR_DEFAULTTOPRIMARY);
+		if (!GetMonitorInfo(hmon, &mi))
+		{
+			return 0;
+		}
+		x = mi.rcMonitor.left;
+		y = mi.rcMonitor.top;
+		width = mi.rcMonitor.right - mi.rcMonitor.left;
+		height = mi.rcMonitor.bottom - mi.rcMonitor.top;
+	}
+
+	// For a WS_CHILD window the coordinates are relative to the parent (WorkerW),
+	// which already covers the virtual desktop. For a fallback popup we use screen coords.
+	DWORD style = workerw ? (WS_CHILD | WS_VISIBLE) : (WS_POPUP | WS_VISIBLE);
+	DWORD exStyle = workerw ? WS_EX_NOACTIVATE : (WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE);
+
+	HWND hwnd = CreateWindowEx(
+		exStyle,
+		CLASS_NAME,
+		L"Live Screen - Renderer",
+		style,
+		x,
+		y,
+		width,
+		height,
+		workerw,
+		nullptr,
+		hInstance,
+		nullptr);
+
+	if (hwnd == NULL)
+	{
+		return 0;
+	}
+
+	DebugWindowState(L"Renderer after CreateWindowEx", hwnd, workerw);
+
+	g_vlc = libvlc_new(0, nullptr);
+	if (!g_vlc)
+	{
+		return 0;
+	}
+
+	g_media = libvlc_media_new_path(
+		g_vlc,
+		R"(C:\Users\marti\Downloads\skyrim_wallpaper.mp4)");
+
+	if (!g_media)
+	{
+		libvlc_release(g_vlc);
+		g_vlc = nullptr;
+		return 0;
+	}
+
+	g_player = libvlc_media_player_new_from_media(g_media);
+	if (!g_player)
+	{
+		libvlc_media_release(g_media);
+		libvlc_release(g_vlc);
+		g_media = nullptr;
+		g_vlc = nullptr;
+		return 0;
+	}
+
+	libvlc_media_player_set_hwnd(g_player, hwnd);
+	libvlc_audio_set_volume(g_player, 50);
+	libvlc_media_player_play(g_player);
+
+	ShowWindow(hwnd, SW_SHOWNA);
+	DebugWindowState(L"Renderer after ShowWindow", hwnd, workerw);
+
+	MSG msg = { };
+
+	while (GetMessageW(&msg, nullptr, 0, 0) > 0)
+	{
+		TranslateMessage(&msg);
+		DispatchMessage(&msg);
+	}
+
+	return 0;
+}
+
+LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
+{
+	switch (uMsg)
+	{
+	case WM_ERASEBKGND:
+		// VLC paints the entire client area; skip background erase to avoid a white flash.
+		return 1;
+	case WM_DESTROY:
+		if (g_player)
+		{
+			libvlc_media_player_stop(g_player);
+			libvlc_media_player_release(g_player);
+			g_player = nullptr;
+		}
+
+		// Force WorkerW (and the desktop wallpaper underneath) to repaint where our
+		// child window used to be, otherwise a stale white rectangle stays on screen.
+		if (g_workerw && IsWindow(g_workerw))
+		{
+			InvalidateRect(g_workerw, nullptr, TRUE);
+			UpdateWindow(g_workerw);
+		}
+
+		if (g_media)
+		{
+			libvlc_media_release(g_media);
+			g_media = nullptr;
+		}
+
+		if (g_vlc)
+		{
+			libvlc_release(g_vlc);
+			g_vlc = nullptr;
+		}
+
+		PostQuitMessage(0);
+		return 0;
+	}
+
+	return DefWindowProcW(hwnd, uMsg, wParam, lParam);
+}
+
+void DebugWindowState(const wchar_t* name, HWND hwnd, HWND expectedParent)
+{
+	wchar_t className[256] = { };
+	wchar_t parentClassName[256] = { };
+	wchar_t buffer[1024] = { };
+	RECT rect = { };
+
+	HWND parent = hwnd ? GetParent(hwnd) : nullptr;
+	LONG_PTR style = hwnd ? GetWindowLongPtr(hwnd, GWL_STYLE) : 0;
+	LONG_PTR exStyle = hwnd ? GetWindowLongPtr(hwnd, GWL_EXSTYLE) : 0;
+	BOOL visible = hwnd ? IsWindowVisible(hwnd) : FALSE;
+	BOOL childOfExpectedParent = hwnd && expectedParent ? IsChild(expectedParent, hwnd) : FALSE;
+	BOOL parentMatches = parent == expectedParent;
+
+	if (hwnd)
+	{
+		GetClassNameW(hwnd, className, ARRAYSIZE(className));
+		GetWindowRect(hwnd, &rect);
+	}
+
+	if (parent)
+	{
+		GetClassNameW(parent, parentClassName, ARRAYSIZE(parentClassName));
+	}
+
+	StringCchPrintfW(
+		buffer,
+		ARRAYSIZE(buffer),
+		L"%s: hwnd=%p class=%s parent=%p parentClass=%s expectedParent=%p parentMatches=%d isChild=%d visible=%d style=0x%Ix exStyle=0x%Ix rect=(%ld,%ld)-(%ld,%ld)\r\n",
+		name,
+		hwnd,
+		className,
+		parent,
+		parentClassName,
+		expectedParent,
+		parentMatches,
+		childOfExpectedParent,
+		visible,
+		style,
+		exStyle,
+		rect.left,
+		rect.top,
+		rect.right,
+		rect.bottom);
+
+	OutputDebugStringW(buffer);
+}
+
+BOOL CALLBACK EnumWindowsProc(HWND hwnd, LPARAM lParam)
+{
+	// The icon host (a top-level WorkerW, or sometimes Progman itself) owns SHELLDLL_DefView.
+	// The wallpaper WorkerW is the next top-level WorkerW that appears AFTER the icon host
+	// in Z-order (i.e. behind it). We must keep enumerating so that on systems where both
+	// Progman and a WorkerW report a SHELLDLL_DefView child we end up using the last one,
+	// which is the actual icon host.
+	HWND shellView = FindWindowEx(hwnd, nullptr, L"SHELLDLL_DefView", nullptr);
+	if (shellView != nullptr)
+	{
+		g_shellViewHost = hwnd;
+		HWND candidate = FindWindowEx(nullptr, hwnd, L"WorkerW", nullptr);
+		if (candidate != nullptr)
+		{
+			g_workerw = candidate;
+		}
+	}
+
+	return TRUE;
+}
+
+BOOL CALLBACK DebugDesktopWindowsProc(HWND hwnd, LPARAM lParam)
+{
+	wchar_t className[256] = { };
+	GetClassNameW(hwnd, className, ARRAYSIZE(className));
+
+	if (lstrcmpW(className, L"Progman") == 0 || lstrcmpW(className, L"WorkerW") == 0)
+	{
+		DebugWindowState(className, hwnd, nullptr);
+
+		HWND shellView = FindWindowEx(hwnd, nullptr, L"SHELLDLL_DefView", nullptr);
+		if (shellView)
+		{
+			DebugWindowState(L"  SHELLDLL_DefView", shellView, hwnd);
+		}
+	}
+
+	return TRUE;
+}
+
+HWND GetWorkerW()
+{
+   g_workerw = nullptr;
+	g_shellViewHost = nullptr;
+
+	HWND progman = FindWindow(L"Progman", nullptr);
+	if (!progman)
+	{
+		return nullptr;
+	}
+
+	DWORD_PTR result = 0;
+
+	SendMessageTimeout(
+		progman,
+      0x052C,
+		0,
+		0,
+		SMTO_NORMAL,
+		1000,
+		&result);
+
+	SendMessageTimeout(
+		progman,
+		0x052C,
+		0xD,
+		0,
+		SMTO_NORMAL,
+		1000,
+		&result);
+
+	SendMessageTimeout(
+		progman,
+		0x052C,
+		0xD,
+		1,
+		SMTO_NORMAL,
+		1000,
+		&result);
+
+	EnumWindows(EnumWindowsProc, 0);
+	EnumWindows(DebugDesktopWindowsProc, 0);
+	DebugWindowState(L"Shell view host", g_shellViewHost, nullptr);
+	DebugWindowState(L"Selected WorkerW", g_workerw, nullptr);
+
+	return g_workerw;
+}
+
