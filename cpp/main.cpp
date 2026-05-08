@@ -3,9 +3,17 @@
 #include <strsafe.h>
 #include <shellscalingapi.h>
 #include <vlc/vlc.h>
+#include <shlobj.h>
+#include <string>
+
+#include "SafeRelease.h"
 
 #pragma comment(lib, "Shcore.lib")
 #pragma comment(lib, "User32.lib")
+
+#define WM_TRAYICON (WM_USER + 1)
+#define ID_TRAY_EXIT 1001
+#define ID_TRAY_CHANGE_WALLPAPER 1002
 
 HWND g_workerw = nullptr;
 HWND g_shellViewHost = nullptr;
@@ -17,11 +25,15 @@ libvlc_instance_t* g_vlc = nullptr;
 libvlc_media_player_t* g_player = nullptr;
 libvlc_media_t* g_media = nullptr;
 
+NOTIFYICONDATA g_nid = { };
+
+LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 BOOL CALLBACK EnumWindowsProc(HWND hwnd, LPARAM lParam);
+void DebugWindowState(const wchar_t* name, HWND hwnd, HWND expectedParent);
 BOOL CALLBACK DebugDesktopWindowsProc(HWND hwnd, LPARAM lParam);
 HWND GetWorkerW();
-void DebugWindowState(const wchar_t* name, HWND hwnd, HWND expectedParent);
-LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
+HRESULT ChangeWallpaper();
+HRESULT PlayWallpaperPath(PCWSTR path);
 
 static void VlcLog(void* /*data*/, int level, const libvlc_log_t* /*ctx*/, const char* fmt, va_list args)
 {
@@ -35,6 +47,13 @@ static void VlcLog(void* /*data*/, int level, const libvlc_log_t* /*ctx*/, const
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR pCmdLine, int nCmdShow)
 {
+	HRESULT hrInit = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+
+	if (FAILED(hrInit))
+	{
+		return 0;
+	}
+
 	// Match physical pixels so our window size aligns with WorkerW (which is in physical pixels).
 	// Try Per-Monitor V2 first; fall back to system DPI awareness on older Windows.
 	if (!SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2))
@@ -165,6 +184,17 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR pCmdLine, int nCmdShow
 		DebugWindowState(L"Renderer after raised-desktop attach", hwnd, g_progman);
 	}
 
+	g_nid.cbSize = sizeof(NOTIFYICONDATA);
+	g_nid.hWnd = hwnd;
+	g_nid.uID = 1;
+	g_nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
+	g_nid.uCallbackMessage = WM_TRAYICON;
+	g_nid.hIcon = LoadIcon(nullptr, IDI_APPLICATION);
+
+	wcscpy_s(g_nid.szTip, L"Live Screen");
+
+	Shell_NotifyIcon(NIM_ADD, &g_nid);
+
 	// --no-video-title-show: don't draw the filename overlay on top of the wallpaper.
 	// --aout=mmdevice:        force WASAPI shared output. Without this, libvlc may inherit
 	//                         a broken/muted audio module choice from %APPDATA%\vlc\vlcrc
@@ -218,11 +248,13 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR pCmdLine, int nCmdShow
 
 	MSG msg = { };
 
-	while (GetMessageW(&msg, nullptr, 0, 0) > 0)
+	while (GetMessage(&msg, nullptr, 0, 0) > 0)
 	{
 		TranslateMessage(&msg);
 		DispatchMessage(&msg);
 	}
+
+	CoUninitialize();
 
 	return 0;
 }
@@ -234,7 +266,9 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 	case WM_ERASEBKGND:
 		// VLC paints the entire client area; skip background erase to avoid a white flash.
 		return 1;
+
 	case WM_DESTROY:
+	{
 		if (g_player)
 		{
 			libvlc_media_player_stop(g_player);
@@ -265,6 +299,50 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 
 		PostQuitMessage(0);
 		return 0;
+	}
+
+	case WM_TRAYICON:
+	{
+		if (lParam == WM_RBUTTONUP)
+		{
+			POINT pt;
+			GetCursorPos(&pt);
+
+			HMENU hMenu = CreatePopupMenu();
+			AppendMenu(hMenu, MF_STRING, ID_TRAY_CHANGE_WALLPAPER, L"Change Wallpaper");
+			AppendMenu(hMenu, MF_STRING, ID_TRAY_EXIT, L"Exit");
+
+			SetForegroundWindow(hwnd);
+
+			int cmd = TrackPopupMenu(
+				hMenu,
+				TPM_RETURNCMD | TPM_NONOTIFY,
+				pt.x,
+				pt.y,
+				0,
+				hwnd,
+				nullptr
+			);
+
+			DestroyMenu(hMenu);
+
+			if (cmd == ID_TRAY_EXIT)
+			{
+				DestroyWindow(hwnd);
+				return 0;
+			}
+			if (cmd == ID_TRAY_CHANGE_WALLPAPER)
+			{
+				HRESULT hr = ChangeWallpaper();
+				if (FAILED(hr))
+				{
+					MessageBoxW(hwnd, L"Failed to change wallpaper", L"Error", MB_ICONERROR);
+				}
+				return 0;
+			}
+		}
+		return 0;
+	}
 	}
 
 	return DefWindowProcW(hwnd, uMsg, wParam, lParam);
@@ -409,3 +487,93 @@ HWND GetWorkerW()
 	return g_workerw;
 }
 
+
+HRESULT ChangeWallpaper()
+{
+	IFileOpenDialog* pFileOpen = nullptr;
+	IShellItem* pItem = nullptr;
+	PWSTR pszFilePath = nullptr;
+
+	HRESULT hr = CoCreateInstance(__uuidof(FileOpenDialog), NULL, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&pFileOpen));
+
+	if (FAILED(hr))
+	{
+		goto done;
+	}
+
+	hr = pFileOpen->Show(nullptr);
+	if (FAILED(hr))
+	{
+		goto done;
+	}
+
+	hr = pFileOpen->GetResult(&pItem);
+	if (FAILED(hr))
+	{
+		goto done;
+	}
+
+	hr = pItem->GetDisplayName(SIGDN_FILESYSPATH, &pszFilePath);
+	if (FAILED(hr))
+	{
+		goto done;
+	}
+
+   hr = PlayWallpaperPath(pszFilePath);
+
+done:
+    if (pszFilePath)
+	{
+		CoTaskMemFree(pszFilePath);
+	}
+
+	SafeRelease(&pItem);
+	SafeRelease(&pFileOpen);
+
+	return hr;
+}
+
+HRESULT PlayWallpaperPath(PCWSTR path)
+{
+	if (!g_vlc || !g_player || !path || !*path)
+	{
+		return E_INVALIDARG;
+	}
+
+	int utf8Length = WideCharToMultiByte(CP_UTF8, 0, path, -1, nullptr, 0, nullptr, nullptr);
+	if (utf8Length <= 0)
+	{
+		return HRESULT_FROM_WIN32(GetLastError());
+	}
+
+	std::string utf8Path(utf8Length, '\0');
+	if (WideCharToMultiByte(CP_UTF8, 0, path, -1, utf8Path.data(), utf8Length, nullptr, nullptr) <= 0)
+	{
+		return HRESULT_FROM_WIN32(GetLastError());
+	}
+
+	libvlc_media_t* newMedia = libvlc_media_new_path(g_vlc, utf8Path.c_str());
+	if (!newMedia)
+	{
+		return E_FAIL;
+	}
+
+	libvlc_media_player_stop(g_player);
+	libvlc_media_player_set_media(g_player, newMedia);
+
+	if (libvlc_media_player_play(g_player) != 0)
+	{
+		libvlc_media_release(newMedia);
+		return E_FAIL;
+	}
+
+	libvlc_audio_set_volume(g_player, 100);
+
+	if (g_media)
+	{
+		libvlc_media_release(g_media);
+	}
+
+	g_media = newMedia;
+	return S_OK;
+}
