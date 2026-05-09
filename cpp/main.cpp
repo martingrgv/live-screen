@@ -11,11 +11,10 @@
 #pragma comment(lib, "Shcore.lib")
 #pragma comment(lib, "User32.lib")
 
-#define WM_TRAYICON (WM_USER + 1)
-#define ID_TRAY_EXIT 1001
-#define ID_TRAY_CHANGE_WALLPAPER 1002
-#define ID_TRAY_MUTE 1003
-#define ID_TRAY_MUTE 1003
+constexpr UINT WM_TRAYICON = (WM_USER + 1)
+constexpr ID_TRAY_EXIT = 1001;
+constexpr ID_TRAY_CHANGE_WALLPAPER = 1002;
+constexpr ID_TRAY_MUTE = 1003;
 
 HWND g_workerw = nullptr;
 HWND g_shellViewHost = nullptr;
@@ -225,7 +224,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR pCmdLine, int nCmdShow
 
 	g_media = libvlc_media_new_path(
 		g_vlc,
-		R"(C:\Users\marti\Downloads\samurai_wallpaper.mp4)");
+		R"(C:\Users\marti\Downloads\samurai_wallpaper.mp4)"); // TODO: make this dynamic
 
 	if (!g_media)
 	{
