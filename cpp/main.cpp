@@ -1,59 +1,31 @@
-#include <windows.h>
-#include <winuser.h>
-#include <strsafe.h>
-#include <shellscalingapi.h>
-#include <vlc/vlc.h>
-#include <shlobj.h>
-#include <string>
+// Live Screen - entry point.
+//
+// Top-level orchestration only:
+//   * Win32 init (COM, DPI awareness, window class, window).
+//   * Desktop hooking via DesktopHost.
+//   * Tray icon registration via TrayIcon (RAII).
+//   * libvlc lifecycle via VlcPlayer.
+//   * Standard message loop.
+//
+// All real work lives in the modules under src/.
 
-#include "SafeRelease.h"
+#include <windows.h>
+#include <shellscalingapi.h>
+
+#include "app/App.h"
+#include "media/VlcPlayer.h"
+#include "ui/TrayIcon.h"
+#include "util/ComApartment.h"
+#include "win/DebugLog.h"
+#include "win/DesktopHost.h"
 
 #pragma comment(lib, "Shcore.lib")
 #pragma comment(lib, "User32.lib")
 
-constexpr UINT WM_TRAYICON = (WM_USER + 1)
-constexpr ID_TRAY_EXIT = 1001;
-constexpr ID_TRAY_CHANGE_WALLPAPER = 1002;
-constexpr ID_TRAY_MUTE = 1003;
-
-HWND g_workerw = nullptr;
-HWND g_shellViewHost = nullptr;
-HWND g_shellDefView = nullptr;
-HWND g_progman = nullptr;
-bool g_raisedDesktop = false;
-
-libvlc_instance_t* g_vlc = nullptr;
-libvlc_media_list_player_t* g_listPlayer = nullptr;
-libvlc_media_list_t* g_mediaList = nullptr;
-libvlc_media_player_t* g_player = nullptr;
-libvlc_media_t* g_media = nullptr;
-
-NOTIFYICONDATA g_nid = { };
-bool g_muted = false;
-
-LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
-BOOL CALLBACK EnumWindowsProc(HWND hwnd, LPARAM lParam);
-void DebugWindowState(const wchar_t* name, HWND hwnd, HWND expectedParent);
-BOOL CALLBACK DebugDesktopWindowsProc(HWND hwnd, LPARAM lParam);
-HWND GetWorkerW();
-HRESULT ChangeWallpaper();
-HRESULT PlayWallpaperPath(PCWSTR path);
-
-static void VlcLog(void* /*data*/, int level, const libvlc_log_t* /*ctx*/, const char* fmt, va_list args)
+int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR /*pCmdLine*/, int /*nCmdShow*/)
 {
-	char message[1024] = { };
-	vsnprintf_s(message, _TRUNCATE, fmt, args);
-
-	wchar_t wide[1100] = { };
-	StringCchPrintfW(wide, ARRAYSIZE(wide), L"[libvlc:%d] %S\r\n", level, message);
-	OutputDebugStringW(wide);
-}
-
-int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR pCmdLine, int nCmdShow)
-{
-	HRESULT hrInit = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
-
-	if (FAILED(hrInit))
+	ComApartment com(COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+	if (!com.ok())
 	{
 		return 0;
 	}
@@ -67,8 +39,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR pCmdLine, int nCmdShow
 
 	const wchar_t* CLASS_NAME = L"Live Screen Window Class";
 
-	WNDCLASS wc = { };
-
+	WNDCLASS wc = {};
 	wc.lpfnWndProc = WindowProc;
 	wc.hInstance = hInstance;
 	wc.lpszClassName = CLASS_NAME;
@@ -89,7 +60,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR pCmdLine, int nCmdShow
 	if (workerw && !g_raisedDesktop)
 	{
 		// Classic layout: WorkerW is the parent, child coords are relative to it.
-		RECT wr = { };
+		RECT wr = {};
 		GetClientRect(workerw, &wr);
 		x = 0;
 		y = 0;
@@ -105,22 +76,27 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR pCmdLine, int nCmdShow
 	DWORD style;
 	DWORD exStyle;
 	HWND createParent;
+	// WS_CLIPCHILDREN | WS_CLIPSIBLINGS lets DWM elide drawing under sibling windows
+	// (e.g. SHELLDLL_DefView icons) and avoids extra invalidation as the cursor passes
+	// over them, which otherwise contributes to cursor lag while the video plays.
+	const DWORD kClipStyles = WS_CLIPCHILDREN | WS_CLIPSIBLINGS;
+
 	if (g_raisedDesktop)
 	{
-		style = WS_POPUP; // becomes WS_CHILD after SetParent
+		style = WS_POPUP | kClipStyles; // becomes WS_CHILD after SetParent
 		exStyle = WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW;
 		createParent = nullptr;
 	}
 	else if (workerw)
 	{
-		style = WS_CHILD | WS_VISIBLE;
+		style = WS_CHILD | WS_VISIBLE | kClipStyles;
 		exStyle = WS_EX_NOACTIVATE;
 		createParent = workerw;
 	}
 	else
 	{
 		// No desktop layer found: fall back to a popup over the primary monitor.
-		MONITORINFO mi = { };
+		MONITORINFO mi = {};
 		mi.cbSize = sizeof(mi);
 		HMONITOR hmon = MonitorFromPoint(POINT{ 0, 0 }, MONITOR_DEFAULTTOPRIMARY);
 		if (GetMonitorInfo(hmon, &mi))
@@ -130,7 +106,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR pCmdLine, int nCmdShow
 			width = mi.rcMonitor.right - mi.rcMonitor.left;
 			height = mi.rcMonitor.bottom - mi.rcMonitor.top;
 		}
-		style = WS_POPUP | WS_VISIBLE;
+		style = WS_POPUP | WS_VISIBLE | kClipStyles;
 		exStyle = WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
 		createParent = nullptr;
 	}
@@ -149,7 +125,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR pCmdLine, int nCmdShow
 		hInstance,
 		nullptr);
 
-	if (hwnd == NULL)
+	if (hwnd == nullptr)
 	{
 		return 0;
 	}
@@ -163,7 +139,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR pCmdLine, int nCmdShow
 		// SHELLDLL_DefView (icons) but above the wallpaper WorkerW.
 		// Note: WS_EX_LAYERED must already be set BEFORE SetParent (set at create time).
 		SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
-		SetWindowLongPtr(hwnd, GWL_STYLE, WS_CHILD | WS_VISIBLE);
+		SetWindowLongPtr(hwnd, GWL_STYLE, WS_CHILD | WS_VISIBLE | kClipStyles);
 		SetParent(hwnd, g_progman);
 
 		if (g_shellDefView)
@@ -188,464 +164,26 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR pCmdLine, int nCmdShow
 		DebugWindowState(L"Renderer after raised-desktop attach", hwnd, g_progman);
 	}
 
-	g_nid.cbSize = sizeof(NOTIFYICONDATA);
-	g_nid.hWnd = hwnd;
-	g_nid.uID = 1;
-	g_nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
-	g_nid.uCallbackMessage = WM_TRAYICON;
-	g_nid.hIcon = LoadIcon(nullptr, IDI_APPLICATION);
+	TrayIcon tray(hwnd, WM_TRAYICON, L"Live Screen");
 
-	wcscpy_s(g_nid.szTip, L"Live Screen");
-
-	Shell_NotifyIcon(NIM_ADD, &g_nid);
-
-	// --no-video-title-show: don't draw the filename overlay on top of the wallpaper.
-	// --aout=mmdevice:        force WASAPI shared output. Without this, libvlc may inherit
-	//                         a broken/muted audio module choice from %APPDATA%\vlc\vlcrc
-	//                         (e.g. if the user has VLC installed and muted there), which
-	//                         is the most common reason video plays but audio is silent.
-	// --no-video-title-show: don't draw the filename overlay on top of the wallpaper.
-	// We deliberately do NOT pass --no-config because some libvlc builds then refuse to
-	// load any audio output module; instead we explicitly override the offending settings.
-	const char* vlcArgs[] =
-	{
-		"--aout=mmdevice",
-		"--no-video-title-show",
-		"--quiet",
-	};
-
-	g_vlc = libvlc_new(static_cast<int>(ARRAYSIZE(vlcArgs)), vlcArgs);
-	if (!g_vlc)
+	HRESULT hrVlc = InitVlc(
+		hwnd,
+		LR"(C:\Users\marti\Downloads\samurai_wallpaper.mp4)"); // TODO: make this dynamic
+	if (FAILED(hrVlc))
 	{
 		return 0;
 	}
-
-	libvlc_log_set(g_vlc, VlcLog, nullptr);
-
-	g_media = libvlc_media_new_path(
-		g_vlc,
-		R"(C:\Users\marti\Downloads\samurai_wallpaper.mp4)"); // TODO: make this dynamic
-
-	if (!g_media)
-	{
-		libvlc_release(g_vlc);
-		g_vlc = nullptr;
-		return 0;
-	}
-
- g_mediaList = libvlc_media_list_new(g_vlc);
-	if (!g_mediaList)
-	{
-		libvlc_media_release(g_media);
-		libvlc_release(g_vlc);
-		g_media = nullptr;
-		g_vlc = nullptr;
-		return 0;
-	}
-
-	libvlc_media_list_add_media(g_mediaList, g_media);
-
-	g_player = libvlc_media_player_new(g_vlc);
-	if (!g_player)
-	{
-      libvlc_media_list_release(g_mediaList);
-		libvlc_media_release(g_media);
-		libvlc_release(g_vlc);
-      g_mediaList = nullptr;
-		g_media = nullptr;
-		g_vlc = nullptr;
-		return 0;
-	}
-
-	libvlc_media_player_set_hwnd(g_player, hwnd);
-
-	g_listPlayer = libvlc_media_list_player_new(g_vlc);
-	if (!g_listPlayer)
-	{
-		libvlc_media_player_release(g_player);
-		libvlc_media_list_release(g_mediaList);
-		libvlc_media_release(g_media);
-		libvlc_release(g_vlc);
-		g_player = nullptr;
-		g_mediaList = nullptr;
-		g_media = nullptr;
-		g_vlc = nullptr;
-		return 0;
-	}
-
-	libvlc_media_list_player_set_media_player(g_listPlayer, g_player);
-	libvlc_media_list_player_set_media_list(g_listPlayer, g_mediaList);
-	libvlc_media_list_player_set_playback_mode(g_listPlayer, libvlc_playback_mode_loop);
-	libvlc_media_list_player_play(g_listPlayer);
-	libvlc_audio_set_volume(g_player, 100);
-	libvlc_audio_set_mute(g_player, g_muted ? 1 : 0);
 
 	ShowWindow(hwnd, SW_SHOWNA);
 	DebugWindowState(L"Renderer after ShowWindow", hwnd, workerw);
 
-	MSG msg = { };
-
+	MSG msg = {};
 	while (GetMessage(&msg, nullptr, 0, 0) > 0)
 	{
 		TranslateMessage(&msg);
 		DispatchMessage(&msg);
 	}
 
-	CoUninitialize();
-
+	// `tray` and `com` are torn down by their RAII destructors here.
 	return 0;
-}
-
-LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
-{
-	switch (uMsg)
-	{
-	case WM_ERASEBKGND:
-		// VLC paints the entire client area; skip background erase to avoid a white flash.
-		return 1;
-
-	case WM_DESTROY:
-	{
-       if (g_listPlayer)
-		{
-			libvlc_media_list_player_stop(g_listPlayer);
-			libvlc_media_list_player_release(g_listPlayer);
-			g_listPlayer = nullptr;
-		}
-
-		if (g_player)
-		{
-			libvlc_media_player_stop(g_player);
-			libvlc_media_player_release(g_player);
-			g_player = nullptr;
-		}
-
-		// Force the desktop layer to repaint where our child window used to be,
-		// otherwise stale pixels stay on screen.
-		HWND repaintTarget = g_raisedDesktop ? g_progman : g_workerw;
-		if (repaintTarget && IsWindow(repaintTarget))
-		{
-			InvalidateRect(repaintTarget, nullptr, TRUE);
-			UpdateWindow(repaintTarget);
-		}
-
-        if (g_mediaList)
-		{
-			libvlc_media_list_release(g_mediaList);
-			g_mediaList = nullptr;
-		}
-
-		if (g_media)
-		{
-			libvlc_media_release(g_media);
-			g_media = nullptr;
-		}
-
-		if (g_vlc)
-		{
-			libvlc_release(g_vlc);
-			g_vlc = nullptr;
-		}
-
-		PostQuitMessage(0);
-		return 0;
-	}
-
-	case WM_TRAYICON:
-	{
-     if (lParam == WM_LBUTTONUP || lParam == WM_RBUTTONUP)
-		{
-			POINT pt;
-			GetCursorPos(&pt);
-
-			HMENU hMenu = CreatePopupMenu();
-            AppendMenu(hMenu, MF_STRING | (g_muted ? MF_CHECKED : MF_UNCHECKED), ID_TRAY_MUTE, L"Mute");
-			AppendMenu(hMenu, MF_STRING, ID_TRAY_CHANGE_WALLPAPER, L"Change Wallpaper");
-			AppendMenu(hMenu, MF_STRING, ID_TRAY_EXIT, L"Exit");
-
-			SetForegroundWindow(hwnd);
-
-			int cmd = TrackPopupMenu(
-				hMenu,
-				TPM_RETURNCMD | TPM_NONOTIFY,
-				pt.x,
-				pt.y,
-				0,
-				hwnd,
-				nullptr
-			);
-
-			DestroyMenu(hMenu);
-
-			if (cmd == ID_TRAY_EXIT)
-			{
-				DestroyWindow(hwnd);
-				return 0;
-			}
-            if (cmd == ID_TRAY_MUTE)
-			{
-				g_muted = !g_muted;
-				if (g_player)
-				{
-					libvlc_audio_set_mute(g_player, g_muted ? 1 : 0);
-				}
-				return 0;
-			}
-			if (cmd == ID_TRAY_CHANGE_WALLPAPER)
-			{
-				HRESULT hr = ChangeWallpaper();
-				if (FAILED(hr))
-				{
-					MessageBoxW(hwnd, L"Failed to change wallpaper", L"Error", MB_ICONERROR);
-				}
-				return 0;
-			}
-		}
-		return 0;
-	}
-	}
-
-	return DefWindowProcW(hwnd, uMsg, wParam, lParam);
-}
-
-void DebugWindowState(const wchar_t* name, HWND hwnd, HWND expectedParent)
-{
-	wchar_t className[256] = { };
-	wchar_t parentClassName[256] = { };
-	wchar_t buffer[1024] = { };
-	RECT rect = { };
-
-	HWND parent = hwnd ? GetParent(hwnd) : nullptr;
-	LONG_PTR style = hwnd ? GetWindowLongPtr(hwnd, GWL_STYLE) : 0;
-	LONG_PTR exStyle = hwnd ? GetWindowLongPtr(hwnd, GWL_EXSTYLE) : 0;
-	BOOL visible = hwnd ? IsWindowVisible(hwnd) : FALSE;
-	BOOL childOfExpectedParent = hwnd && expectedParent ? IsChild(expectedParent, hwnd) : FALSE;
-	BOOL parentMatches = parent == expectedParent;
-
-	if (hwnd)
-	{
-		GetClassNameW(hwnd, className, ARRAYSIZE(className));
-		GetWindowRect(hwnd, &rect);
-	}
-
-	if (parent)
-	{
-		GetClassNameW(parent, parentClassName, ARRAYSIZE(parentClassName));
-	}
-
-	StringCchPrintfW(
-		buffer,
-		ARRAYSIZE(buffer),
-		L"%s: hwnd=%p class=%s parent=%p parentClass=%s expectedParent=%p parentMatches=%d isChild=%d visible=%d style=0x%Ix exStyle=0x%Ix rect=(%ld,%ld)-(%ld,%ld)\r\n",
-		name,
-		hwnd,
-		className,
-		parent,
-		parentClassName,
-		expectedParent,
-		parentMatches,
-		childOfExpectedParent,
-		visible,
-		style,
-		exStyle,
-		rect.left,
-		rect.top,
-		rect.right,
-		rect.bottom);
-
-	OutputDebugStringW(buffer);
-}
-
-BOOL CALLBACK EnumWindowsProc(HWND hwnd, LPARAM lParam)
-{
-	// Classic case: walk top-level windows; whoever owns SHELLDLL_DefView is the icon
-	// host, the wallpaper WorkerW is the next top-level WorkerW after it in Z-order.
-	HWND shellView = FindWindowEx(hwnd, nullptr, L"SHELLDLL_DefView", nullptr);
-	if (shellView != nullptr)
-	{
-		g_shellViewHost = hwnd;
-		g_shellDefView = shellView;
-		HWND candidate = FindWindowEx(nullptr, hwnd, L"WorkerW", nullptr);
-		if (candidate != nullptr)
-		{
-			g_workerw = candidate;
-		}
-	}
-
-	return TRUE;
-}
-
-BOOL CALLBACK DebugDesktopWindowsProc(HWND hwnd, LPARAM lParam)
-{
-	wchar_t className[256] = { };
-	GetClassNameW(hwnd, className, ARRAYSIZE(className));
-
-	if (lstrcmpW(className, L"Progman") == 0 || lstrcmpW(className, L"WorkerW") == 0)
-	{
-		DebugWindowState(className, hwnd, nullptr);
-
-		HWND shellView = FindWindowEx(hwnd, nullptr, L"SHELLDLL_DefView", nullptr);
-		if (shellView)
-		{
-			DebugWindowState(L"  SHELLDLL_DefView", shellView, hwnd);
-		}
-	}
-
-	return TRUE;
-}
-
-HWND GetWorkerW()
-{
-	g_workerw = nullptr;
-	g_shellViewHost = nullptr;
-	g_shellDefView = nullptr;
-	g_raisedDesktop = false;
-
-	g_progman = FindWindow(L"Progman", nullptr);
-	if (!g_progman)
-	{
-		return nullptr;
-	}
-
-	// Detect the modern Windows 11 "raised desktop with layered ShellView" layout.
-	// In that case Progman is created with WS_EX_NOREDIRECTIONBITMAP, the SHELLDLL_DefView
-	// is a WS_EX_LAYERED child of Progman, and the wallpaper WorkerW is itself a CHILD of
-	// Progman (not a top-level sibling). EnumWindows will not find it.
-	LONG_PTR progmanExStyle = GetWindowLongPtr(g_progman, GWL_EXSTYLE);
-	g_raisedDesktop = (progmanExStyle & WS_EX_NOREDIRECTIONBITMAP) != 0;
-
-	DWORD_PTR result = 0;
-
-	// Tell Progman to spawn the wallpaper WorkerW. The (0xD, 0x1) variant is what works
-	// on modern Windows 10/11 (matches Lively).
-	SendMessageTimeout(
-		g_progman,
-		0x052C,
-		0xD,
-		0x1,
-		SMTO_NORMAL,
-		1000,
-		&result);
-
-	// Classic detection (works on Windows 10 and pre-raised-desktop Windows 11).
-	EnumWindows(EnumWindowsProc, 0);
-	EnumWindows(DebugDesktopWindowsProc, 0);
-	DebugWindowState(L"Progman", g_progman, nullptr);
-	DebugWindowState(L"Shell view host", g_shellViewHost, nullptr);
-	DebugWindowState(L"Selected WorkerW (classic)", g_workerw, nullptr);
-
-	if (g_raisedDesktop)
-	{
-		// Raised-desktop layout: SHELLDLL_DefView and the wallpaper WorkerW are both
-		// direct children of Progman.
-		g_shellDefView = FindWindowEx(g_progman, nullptr, L"SHELLDLL_DefView", nullptr);
-		g_workerw = FindWindowEx(g_progman, nullptr, L"WorkerW", nullptr);
-		DebugWindowState(L"Selected WorkerW (raised)", g_workerw, nullptr);
-		DebugWindowState(L"SHELLDLL_DefView (raised)", g_shellDefView, nullptr);
-	}
-
-	return g_workerw;
-}
-
-
-HRESULT ChangeWallpaper()
-{
-	IFileOpenDialog* pFileOpen = nullptr;
-	IShellItem* pItem = nullptr;
-	PWSTR pszFilePath = nullptr;
-
-	HRESULT hr = CoCreateInstance(__uuidof(FileOpenDialog), NULL, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&pFileOpen));
-
-	if (FAILED(hr))
-	{
-		goto done;
-	}
-
-	hr = pFileOpen->Show(nullptr);
-	if (FAILED(hr))
-	{
-		goto done;
-	}
-
-	hr = pFileOpen->GetResult(&pItem);
-	if (FAILED(hr))
-	{
-		goto done;
-	}
-
-	hr = pItem->GetDisplayName(SIGDN_FILESYSPATH, &pszFilePath);
-	if (FAILED(hr))
-	{
-		goto done;
-	}
-
-   hr = PlayWallpaperPath(pszFilePath);
-
-done:
-    if (pszFilePath)
-	{
-		CoTaskMemFree(pszFilePath);
-	}
-
-	SafeRelease(&pItem);
-	SafeRelease(&pFileOpen);
-
-	return hr;
-}
-
-HRESULT PlayWallpaperPath(PCWSTR path)
-{
- if (!g_vlc || !g_player || !g_listPlayer || !path || !*path)
-	{
-		return E_INVALIDARG;
-	}
-
-	int utf8Length = WideCharToMultiByte(CP_UTF8, 0, path, -1, nullptr, 0, nullptr, nullptr);
-	if (utf8Length <= 0)
-	{
-		return HRESULT_FROM_WIN32(GetLastError());
-	}
-
-	std::string utf8Path(utf8Length, '\0');
-	if (WideCharToMultiByte(CP_UTF8, 0, path, -1, utf8Path.data(), utf8Length, nullptr, nullptr) <= 0)
-	{
-		return HRESULT_FROM_WIN32(GetLastError());
-	}
-
-	libvlc_media_t* newMedia = libvlc_media_new_path(g_vlc, utf8Path.c_str());
-	if (!newMedia)
-	{
-		return E_FAIL;
-	}
-
-  libvlc_media_list_t* newMediaList = libvlc_media_list_new(g_vlc);
-	if (!newMediaList)
-	{
-		libvlc_media_release(newMedia);
-		return E_FAIL;
-	}
-
- libvlc_media_list_add_media(newMediaList, newMedia);
-
-    libvlc_media_list_player_stop(g_listPlayer);
-	libvlc_media_list_player_set_media_list(g_listPlayer, newMediaList);
-	libvlc_media_list_player_set_playback_mode(g_listPlayer, libvlc_playback_mode_loop);
-	libvlc_media_list_player_play(g_listPlayer);
-
-	libvlc_audio_set_volume(g_player, 100);
-	libvlc_audio_set_mute(g_player, g_muted ? 1 : 0);
-
-    if (g_mediaList)
-	{
-		libvlc_media_list_release(g_mediaList);
-	}
-
-	if (g_media)
-	{
-		libvlc_media_release(g_media);
-	}
-
- g_mediaList = newMediaList;
-	g_media = newMedia;
-	return S_OK;
 }

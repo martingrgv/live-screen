@@ -67,3 +67,49 @@ vcpkg_installed/
 # test output & cache
 Testing/
 .cache/
+
+# Visual Studio user / session cache
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.opendb
+*.VC.db
+*.VC.opendb
+*.db-shm
+*.db-wal
+*.vsidx
+*.ipch
+
+# MSBuild intermediate / output
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Dd]ebug[Pp]ublic/
+[Rr]elease/
+[Rr]eleases/
+x64/
+x86/
+[Ww][Ii][Nn]32/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+*.tlog
+*.idb
+*.iobj
+*.ipdb
+*.recipe
+*.lastbuildstate
+*.unsuccessfulbuild
+*.log
+*.tli
+*.tlh
+*.exp
+*.res
+
+# VLC runtime payload shipped next to the build output
+**/plugins/**/*.dll
+**/plugins/**/*.jar
+**/plugins/**/*.lua
+**/libvlc*.dll
+**/libvlc*.lib
