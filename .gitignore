@@ -113,3 +113,6 @@ x86/
 **/plugins/**/*.lua
 **/libvlc*.dll
 **/libvlc*.lib
+
+# Release bundling scratch directory (produced by .github/prompts/ship-release.prompt.md)
+release-stage/
