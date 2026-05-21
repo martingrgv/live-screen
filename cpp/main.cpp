@@ -16,7 +16,6 @@
 #include "media/VlcPlayer.h"
 #include "ui/TrayIcon.h"
 #include "util/ComApartment.h"
-#include "win/DebugLog.h"
 #include "win/DesktopHost.h"
 
 #pragma comment(lib, "Shcore.lib")
@@ -49,7 +48,6 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR /*pCmdLine*/, int /*nC
 	RegisterClass(&wc);
 
 	HWND workerw = GetWorkerW();
-	DebugWindowState(L"WorkerW", workerw, nullptr);
 
 	// Compute the full virtual-screen rect so the wallpaper covers all monitors.
 	int x = GetSystemMetrics(SM_XVIRTUALSCREEN);
@@ -130,8 +128,6 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR /*pCmdLine*/, int /*nC
 		return 0;
 	}
 
-	DebugWindowState(L"Renderer after CreateWindowEx", hwnd, workerw);
-
 	if (g_raisedDesktop)
 	{
 		// Microsoft guidance for "raised desktop with layered ShellView" (Win11):
@@ -160,8 +156,6 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR /*pCmdLine*/, int /*nC
 			GetSystemMetrics(SM_CXVIRTUALSCREEN),
 			GetSystemMetrics(SM_CYVIRTUALSCREEN),
 			SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
-
-		DebugWindowState(L"Renderer after raised-desktop attach", hwnd, g_progman);
 	}
 
 	TrayIcon tray(hwnd, WM_TRAYICON, L"Live Screen");
@@ -175,7 +169,6 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR /*pCmdLine*/, int /*nC
 	}
 
 	ShowWindow(hwnd, SW_SHOWNA);
-	DebugWindowState(L"Renderer after ShowWindow", hwnd, workerw);
 
 	MSG msg = {};
 	while (GetMessage(&msg, nullptr, 0, 0) > 0)

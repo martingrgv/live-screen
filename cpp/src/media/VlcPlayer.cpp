@@ -3,7 +3,6 @@
 #include "app/App.h"
 #include "media/VlcHandles.h"
 #include "util/Utf8.h"
-#include "win/DebugLog.h"
 
 #include <string>
 #include <utility>
@@ -49,8 +48,6 @@ HRESULT InitVlc(HWND hwnd, PCWSTR initialPath)
 	{
 		return E_FAIL;
 	}
-
-	libvlc_log_set(vlc.get(), VlcLog, nullptr);
 
 	std::string utf8Path;
 	if (HRESULT hr = WideToUtf8(initialPath, utf8Path); FAILED(hr))

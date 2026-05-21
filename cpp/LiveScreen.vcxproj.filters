@@ -60,9 +60,6 @@
     <ClCompile Include="src\util\Utf8.cpp">
       <Filter>Source Files\util</Filter>
     </ClCompile>
-    <ClCompile Include="src\win\DebugLog.cpp">
-      <Filter>Source Files\win</Filter>
-    </ClCompile>
     <ClCompile Include="src\win\DesktopHost.cpp">
       <Filter>Source Files\win</Filter>
     </ClCompile>
@@ -88,9 +85,6 @@
     </ClInclude>
     <ClInclude Include="src\util\Utf8.h">
       <Filter>Header Files\util</Filter>
-    </ClInclude>
-    <ClInclude Include="src\win\DebugLog.h">
-      <Filter>Header Files\win</Filter>
     </ClInclude>
     <ClInclude Include="src\win\DesktopHost.h">
       <Filter>Header Files\win</Filter>

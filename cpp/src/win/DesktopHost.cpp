@@ -1,7 +1,6 @@
 #include "win/DesktopHost.h"
 
 #include "app/App.h"
-#include "win/DebugLog.h"
 
 namespace
 {
@@ -18,25 +17,6 @@ namespace
 			if (candidate != nullptr)
 			{
 				g_workerw = candidate;
-			}
-		}
-
-		return TRUE;
-	}
-
-	BOOL CALLBACK DebugDesktopWindowsProc(HWND hwnd, LPARAM /*lParam*/)
-	{
-		wchar_t className[256] = {};
-		GetClassNameW(hwnd, className, ARRAYSIZE(className));
-
-		if (lstrcmpW(className, L"Progman") == 0 || lstrcmpW(className, L"WorkerW") == 0)
-		{
-			DebugWindowState(className, hwnd, nullptr);
-
-			HWND shellView = FindWindowEx(hwnd, nullptr, L"SHELLDLL_DefView", nullptr);
-			if (shellView)
-			{
-				DebugWindowState(L"  SHELLDLL_DefView", shellView, hwnd);
 			}
 		}
 
@@ -79,10 +59,6 @@ HWND GetWorkerW()
 
 	// Classic detection (works on Windows 10 and pre-raised-desktop Windows 11).
 	EnumWindows(EnumWindowsProc, 0);
-	EnumWindows(DebugDesktopWindowsProc, 0);
-	DebugWindowState(L"Progman", g_progman, nullptr);
-	DebugWindowState(L"Shell view host", g_shellViewHost, nullptr);
-	DebugWindowState(L"Selected WorkerW (classic)", g_workerw, nullptr);
 
 	if (g_raisedDesktop)
 	{
@@ -90,8 +66,6 @@ HWND GetWorkerW()
 		// direct children of Progman.
 		g_shellDefView = FindWindowEx(g_progman, nullptr, L"SHELLDLL_DefView", nullptr);
 		g_workerw = FindWindowEx(g_progman, nullptr, L"WorkerW", nullptr);
-		DebugWindowState(L"Selected WorkerW (raised)", g_workerw, nullptr);
-		DebugWindowState(L"SHELLDLL_DefView (raised)", g_shellDefView, nullptr);
 	}
 
 	return g_workerw;

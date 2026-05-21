@@ -142,7 +142,6 @@ libvlccore.lib;%(AdditionalDependencies)</AdditionalDependencies>
     <ClCompile Include="src\media\VlcPlayer.cpp" />
     <ClCompile Include="src\ui\TrayIcon.cpp" />
     <ClCompile Include="src\util\Utf8.cpp" />
-    <ClCompile Include="src\win\DebugLog.cpp" />
     <ClCompile Include="src\win\DesktopHost.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -153,7 +152,6 @@ libvlccore.lib;%(AdditionalDependencies)</AdditionalDependencies>
     <ClInclude Include="src\util\ComApartment.h" />
     <ClInclude Include="src\util\UniqueHandles.h" />
     <ClInclude Include="src\util\Utf8.h" />
-    <ClInclude Include="src\win\DebugLog.h" />
     <ClInclude Include="src\win\DesktopHost.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
