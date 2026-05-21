@@ -27,3 +27,17 @@ struct HMenuDeleter
 };
 
 using UniqueHMenu = std::unique_ptr<HMENU, HMenuDeleter>;
+
+// Owns a Win32 HANDLE returned by CreateFile / CreateEvent / etc.
+// INVALID_HANDLE_VALUE and nullptr both denote "no handle"; the deleter
+// skips CloseHandle on either to match the kernel32 contract.
+struct HandleDeleter
+{
+	using pointer = HANDLE;
+	void operator()(HANDLE h) const noexcept
+	{
+		if (h && h != INVALID_HANDLE_VALUE) CloseHandle(h);
+	}
+};
+
+using UniqueHandle = std::unique_ptr<HANDLE, HandleDeleter>;

@@ -22,5 +22,12 @@ private:
 	bool           added_ = false;
 };
 
-// Prompts the user for a media file and starts playing it.
+#include <string>
+
+// Shows an IFileOpenDialog filtered to common video extensions.
+// On success returns S_OK and stores the chosen file's full path in `out`.
+// Returns HRESULT_FROM_WIN32(ERROR_CANCELLED) when the user cancels.
+HRESULT PromptForWallpaperPath(HWND owner, std::wstring& out);
+
+// Prompts the user for a media file, starts playing it, and persists the choice.
 HRESULT ChangeWallpaper();

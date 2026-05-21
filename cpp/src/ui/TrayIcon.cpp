@@ -1,5 +1,6 @@
 #include "ui/TrayIcon.h"
 
+#include "app/Settings.h"
 #include "media/VlcPlayer.h"
 #include "util/UniqueHandles.h"
 
@@ -30,8 +31,10 @@ TrayIcon::~TrayIcon()
 	}
 }
 
-HRESULT ChangeWallpaper()
+HRESULT PromptForWallpaperPath(HWND owner, std::wstring& out)
 {
+	out.clear();
+
 	ComPtr<IFileOpenDialog> dialog;
 	HRESULT hr = CoCreateInstance(
 		__uuidof(FileOpenDialog),
@@ -43,7 +46,15 @@ HRESULT ChangeWallpaper()
 		return hr;
 	}
 
-	hr = dialog->Show(nullptr);
+	const COMDLG_FILTERSPEC filters[] =
+	{
+		{ L"Video files", L"*.mp4;*.mkv;*.webm;*.mov;*.avi;*.m4v;*.wmv" },
+		{ L"All files",   L"*.*" },
+	};
+	dialog->SetFileTypes(ARRAYSIZE(filters), filters);
+	dialog->SetTitle(L"Choose a wallpaper video");
+
+	hr = dialog->Show(owner);
 	if (FAILED(hr))
 	{
 		return hr;
@@ -64,5 +75,25 @@ HRESULT ChangeWallpaper()
 		return hr;
 	}
 
-	return PlayWallpaperPath(path.get());
+	out = path.get();
+	return S_OK;
+}
+
+HRESULT ChangeWallpaper()
+{
+	std::wstring path;
+	HRESULT hr = PromptForWallpaperPath(nullptr, path);
+	if (FAILED(hr))
+	{
+		return hr;
+	}
+
+	if (HRESULT playHr = PlayWallpaperPath(path.c_str()); FAILED(playHr))
+	{
+		return playHr;
+	}
+
+	// Persist after a successful swap so a broken file never overwrites the
+	// last known-good wallpaper in config.ini.
+	return SaveWallpaperPath(path.c_str());
 }

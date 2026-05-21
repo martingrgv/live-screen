@@ -12,8 +12,11 @@
 #include <windows.h>
 #include <shellscalingapi.h>
 
+#include <string>
+
 #include "app/App.h"
 #include "app/OcclusionWatcher.h"
+#include "app/Settings.h"
 #include "media/VlcPlayer.h"
 #include "ui/TrayIcon.h"
 #include "util/ComApartment.h"
@@ -161,9 +164,32 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR /*pCmdLine*/, int /*nC
 
 	TrayIcon tray(hwnd, WM_TRAYICON, L"Live Screen");
 
-	HRESULT hrVlc = InitVlc(
-		hwnd,
-		LR"(C:\Users\marti\Downloads\samurai_wallpaper.mp4)"); // TODO: make this dynamic
+	// Resolve which wallpaper to play:
+	//   1. If config.ini has a path *and* the file still exists, use it.
+	//   2. Otherwise prompt the user once; persist their pick so subsequent
+	//      launches skip the dialog.
+	//   3. If the user cancels the initial prompt, exit cleanly — there is
+	//      nothing for the wallpaper window to display.
+	std::wstring wallpaperPath;
+	HRESULT loadHr = LoadWallpaperPath(wallpaperPath);
+	bool needsPrompt =
+		FAILED(loadHr) ||
+		loadHr == S_FALSE ||
+		wallpaperPath.empty() ||
+		GetFileAttributesW(wallpaperPath.c_str()) == INVALID_FILE_ATTRIBUTES;
+
+	if (needsPrompt)
+	{
+		HRESULT promptHr = PromptForWallpaperPath(hwnd, wallpaperPath);
+		if (FAILED(promptHr) || wallpaperPath.empty())
+		{
+			return 0;
+		}
+		// Best-effort persist; a failed save shouldn't block playback.
+		SaveWallpaperPath(wallpaperPath.c_str());
+	}
+
+	HRESULT hrVlc = InitVlc(hwnd, wallpaperPath.c_str());
 	if (FAILED(hrVlc))
 	{
 		return 0;
