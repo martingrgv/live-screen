@@ -51,6 +51,9 @@
     <ClCompile Include="src\app\App.cpp">
       <Filter>Source Files\app</Filter>
     </ClCompile>
+    <ClCompile Include="src\app\OcclusionWatcher.cpp">
+      <Filter>Source Files\app</Filter>
+    </ClCompile>
     <ClCompile Include="src\media\VlcPlayer.cpp">
       <Filter>Source Files\media</Filter>
     </ClCompile>
@@ -66,6 +69,9 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\app\App.h">
+      <Filter>Header Files\app</Filter>
+    </ClInclude>
+    <ClInclude Include="src\app\OcclusionWatcher.h">
       <Filter>Header Files\app</Filter>
     </ClInclude>
     <ClInclude Include="src\media\VlcHandles.h">

@@ -13,6 +13,7 @@
 #include <shellscalingapi.h>
 
 #include "app/App.h"
+#include "app/OcclusionWatcher.h"
 #include "media/VlcPlayer.h"
 #include "ui/TrayIcon.h"
 #include "util/ComApartment.h"
@@ -170,12 +171,18 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR /*pCmdLine*/, int /*nC
 
 	ShowWindow(hwnd, SW_SHOWNA);
 
+	// Pause libvlc whenever a fullscreen / occluding app is in the foreground,
+	// so the wallpaper stops burning GPU/CPU under a game or video player.
+	StartOcclusionWatcher(hwnd);
+
 	MSG msg = {};
 	while (GetMessage(&msg, nullptr, 0, 0) > 0)
 	{
 		TranslateMessage(&msg);
 		DispatchMessage(&msg);
 	}
+
+	StopOcclusionWatcher();
 
 	// `tray` and `com` are torn down by their RAII destructors here.
 	return 0;

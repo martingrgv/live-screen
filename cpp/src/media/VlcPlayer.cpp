@@ -110,6 +110,26 @@ void ShutdownVlc()
 	g_vlc.reset();
 }
 
+void PauseWallpaper()
+{
+	if (!g_listPlayer)
+	{
+		return;
+	}
+	// set_pause(1) is a no-op if already paused; preferred over toggle so we
+	// don't accidentally resume on a spurious call.
+	libvlc_media_list_player_set_pause(g_listPlayer.get(), 1);
+}
+
+void ResumeWallpaper()
+{
+	if (!g_listPlayer)
+	{
+		return;
+	}
+	libvlc_media_list_player_set_pause(g_listPlayer.get(), 0);
+}
+
 HRESULT PlayWallpaperPath(PCWSTR path)
 {
 	if (!g_vlc || !g_player || !g_listPlayer || !path || !*path)

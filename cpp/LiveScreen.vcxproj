@@ -139,6 +139,7 @@ libvlccore.lib;%(AdditionalDependencies)</AdditionalDependencies>
   <ItemGroup>
     <ClCompile Include="main.cpp" />
     <ClCompile Include="src\app\App.cpp" />
+    <ClCompile Include="src\app\OcclusionWatcher.cpp" />
     <ClCompile Include="src\media\VlcPlayer.cpp" />
     <ClCompile Include="src\ui\TrayIcon.cpp" />
     <ClCompile Include="src\util\Utf8.cpp" />
@@ -146,6 +147,7 @@ libvlccore.lib;%(AdditionalDependencies)</AdditionalDependencies>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\app\App.h" />
+    <ClInclude Include="src\app\OcclusionWatcher.h" />
     <ClInclude Include="src\media\VlcHandles.h" />
     <ClInclude Include="src\media\VlcPlayer.h" />
     <ClInclude Include="src\ui\TrayIcon.h" />
