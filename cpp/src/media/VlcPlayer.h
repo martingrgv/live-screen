@@ -21,3 +21,12 @@ void ApplyEffectiveMute();
 
 // Switches the looped playlist to `path`. Safe to call after InitVlc succeeded.
 HRESULT PlayWallpaperPath(PCWSTR path);
+
+// Applies the current g_fillScreen preference to the active player. When the
+// flag is true, libvlc is told to crop the video to the window's aspect ratio
+// (fills non-16:9 panels like 16:10 laptops without distortion). When false,
+// the crop is cleared and libvlc letterboxes as usual.
+//
+// `hwnd` is the wallpaper render window (used to read the window aspect).
+// Safe to call before InitVlc (no-op).
+void ApplyAspectMode(HWND hwnd);

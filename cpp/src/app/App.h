@@ -14,6 +14,7 @@ constexpr UINT ID_TRAY_EXIT             = 1001;
 constexpr UINT ID_TRAY_CHANGE_WALLPAPER = 1002;
 constexpr UINT ID_TRAY_MUTE             = 1003;
 constexpr UINT ID_TRAY_AUTOSTART        = 1004;
+constexpr UINT ID_TRAY_FILL_SCREEN      = 1005;
 
 // -----------------------------------------------------------------------------
 // Shared application state
@@ -36,6 +37,10 @@ extern VlcMedia           g_media;
 
 extern bool g_muted;
 extern bool g_autoMuted;
+
+// When true, crop the video so it fills the wallpaper window (no black bars
+// on non-matching panels like 16:10 laptops). When false, libvlc letterboxes.
+extern bool g_fillScreen;
 
 // Main window procedure (defined in App.cpp).
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);

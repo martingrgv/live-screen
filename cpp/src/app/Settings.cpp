@@ -13,8 +13,10 @@ namespace
 {
 	constexpr PCWSTR kAppFolder   = L"LiveScreen";
 	constexpr PCWSTR kConfigFile  = L"config.ini";
-	constexpr PCWSTR kSection     = L"Wallpaper";
-	constexpr PCWSTR kKeyPath     = L"Path";
+	constexpr PCWSTR kSection      = L"Wallpaper";
+	constexpr PCWSTR kKeyPath      = L"Path";
+	constexpr PCWSTR kDisplaySection = L"Display";
+	constexpr PCWSTR kKeyFillScreen  = L"FillScreen";
 
 	// Resolves %APPDATA%\LiveScreen, creating the directory if it doesn't exist.
 	HRESULT GetConfigDir(std::wstring& out)
@@ -164,6 +166,57 @@ HRESULT SaveWallpaperPath(PCWSTR path)
 	}
 
 	if (!WritePrivateProfileStringW(kSection, kKeyPath, path, configPath.c_str()))
+	{
+		return HRESULT_FROM_WIN32(GetLastError());
+	}
+	return S_OK;
+}
+
+HRESULT LoadFillScreen(bool& out)
+{
+	std::wstring path;
+	if (HRESULT hr = GetConfigPath(path); FAILED(hr))
+	{
+		return hr;
+	}
+
+	if (!PathFileExistsW(path.c_str()))
+	{
+		return S_FALSE;
+	}
+
+	// Sentinel UINT_MAX lets us distinguish "not present" from an explicit 0.
+	constexpr UINT kSentinel = 0xFFFFFFFFu;
+	UINT value = GetPrivateProfileIntW(
+		kDisplaySection,
+		kKeyFillScreen,
+		kSentinel,
+		path.c_str());
+
+	if (value == kSentinel)
+	{
+		return S_FALSE;
+	}
+
+	out = (value != 0);
+	return S_OK;
+}
+
+HRESULT SaveFillScreen(bool value)
+{
+	std::wstring configPath;
+	if (HRESULT hr = GetConfigPath(configPath); FAILED(hr))
+	{
+		return hr;
+	}
+
+	if (HRESULT hr = EnsureUnicodeIniFile(configPath.c_str()); FAILED(hr))
+	{
+		return hr;
+	}
+
+	PCWSTR text = value ? L"1" : L"0";
+	if (!WritePrivateProfileStringW(kDisplaySection, kKeyFillScreen, text, configPath.c_str()))
 	{
 		return HRESULT_FROM_WIN32(GetLastError());
 	}

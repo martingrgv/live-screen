@@ -18,3 +18,10 @@ HRESULT LoadWallpaperPath(std::wstring& out);
 
 // Persists `path` as the wallpaper to restore on next launch.
 HRESULT SaveWallpaperPath(PCWSTR path);
+
+// Loads the "fill screen" (crop-to-window) preference. Returns S_OK and fills
+// `out` when a value is stored, S_FALSE when no value has been saved yet.
+HRESULT LoadFillScreen(bool& out);
+
+// Persists the "fill screen" (crop-to-window) preference.
+HRESULT SaveFillScreen(bool value);

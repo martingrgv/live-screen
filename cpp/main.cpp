@@ -187,6 +187,16 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR /*pCmdLine*/, int /*nC
 
 	TrayIcon tray(hwnd, WM_TRAYICON, L"Live Screen");
 
+	// Load persisted display preferences before InitVlc so the first frame is
+	// already rendered with the correct crop (no flash of letterboxed video).
+	{
+		bool fill = true;
+		if (LoadFillScreen(fill) == S_OK)
+		{
+			g_fillScreen = fill;
+		}
+	}
+
 	// Resolve which wallpaper to play:
 	//   1. If config.ini has a path *and* the file still exists, use it.
 	//   2. Otherwise prompt the user once; persist their pick so subsequent

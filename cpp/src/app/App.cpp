@@ -1,5 +1,6 @@
 #include "app/App.h"
 
+#include "app/Settings.h"
 #include "media/VlcPlayer.h"
 #include "ui/TrayIcon.h"
 #include "util/Autostart.h"
@@ -22,6 +23,7 @@ VlcMedia           g_media;
 
 bool g_muted     = false;
 bool g_autoMuted = false;
+bool g_fillScreen = true;
 
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
@@ -59,6 +61,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 
 			UniqueHMenu menu(CreatePopupMenu());
 			AppendMenu(menu.get(), MF_STRING | (g_muted ? MF_CHECKED : MF_UNCHECKED), ID_TRAY_MUTE, L"Mute");
+			AppendMenu(menu.get(), MF_STRING | (g_fillScreen ? MF_CHECKED : MF_UNCHECKED), ID_TRAY_FILL_SCREEN, L"Fill screen (crop)");
 			AppendMenu(menu.get(), MF_STRING | (autostart ? MF_CHECKED : MF_UNCHECKED), ID_TRAY_AUTOSTART, L"Launch at startup");
 			AppendMenu(menu.get(), MF_STRING, ID_TRAY_CHANGE_WALLPAPER, L"Change Wallpaper");
 			AppendMenu(menu.get(), MF_STRING, ID_TRAY_EXIT, L"Exit");
@@ -83,6 +86,13 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 			{
 				g_muted = !g_muted;
 				ApplyEffectiveMute();
+				return 0;
+			}
+			if (cmd == ID_TRAY_FILL_SCREEN)
+			{
+				g_fillScreen = !g_fillScreen;
+				ApplyAspectMode(hwnd);
+				SaveFillScreen(g_fillScreen);
 				return 0;
 			}
 			if (cmd == ID_TRAY_AUTOSTART)

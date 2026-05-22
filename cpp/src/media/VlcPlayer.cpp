@@ -4,8 +4,16 @@
 #include "media/VlcHandles.h"
 #include "util/Utf8.h"
 
+#include <numeric>
 #include <string>
 #include <utility>
+
+namespace
+{
+	// Cached on InitVlc so PlayWallpaperPath / ApplyAspectMode can re-apply the
+	// crop geometry without plumbing the HWND through every call site.
+	HWND s_renderHwnd = nullptr;
+}
 
 HRESULT InitVlc(HWND hwnd, PCWSTR initialPath)
 {
@@ -76,6 +84,7 @@ HRESULT InitVlc(HWND hwnd, PCWSTR initialPath)
 	}
 
 	libvlc_media_player_set_hwnd(player.get(), hwnd);
+	s_renderHwnd = hwnd;
 
 	VlcMediaListPlayer listPlayer(libvlc_media_list_player_new(vlc.get()));
 	if (!listPlayer)
@@ -96,6 +105,10 @@ HRESULT InitVlc(HWND hwnd, PCWSTR initialPath)
 	g_mediaList  = std::move(mediaList);
 	g_player     = std::move(player);
 	g_listPlayer = std::move(listPlayer);
+
+	// Apply crop-to-fill if enabled. Done after play() so the vout exists; the
+	// geometry is also remembered by libvlc and re-applied to subsequent media.
+	ApplyAspectMode(hwnd);
 	return S_OK;
 }
 
@@ -108,6 +121,7 @@ void ShutdownVlc()
 	g_mediaList.reset();
 	g_media.reset();
 	g_vlc.reset();
+	s_renderHwnd = nullptr;
 }
 
 void PauseWallpaper()
@@ -207,5 +221,47 @@ HRESULT PlayWallpaperPath(PCWSTR path)
 	// Replace globals; old objects are released by the unique_ptr destructors.
 	g_mediaList = std::move(newMediaList);
 	g_media     = std::move(newMedia);
+
+	// New media resets the vout's crop; re-apply.
+	ApplyAspectMode(s_renderHwnd);
 	return S_OK;
+}
+
+void ApplyAspectMode(HWND hwnd)
+{
+	if (!g_player)
+	{
+		return;
+	}
+
+	if (!g_fillScreen)
+	{
+		// Clear any previously applied crop so libvlc letterboxes again.
+		libvlc_video_set_crop_geometry(g_player.get(), nullptr);
+		return;
+	}
+
+	if (!hwnd || !IsWindow(hwnd))
+	{
+		return;
+	}
+
+	RECT rc{};
+	if (!GetClientRect(hwnd, &rc))
+	{
+		return;
+	}
+	const long w = rc.right - rc.left;
+	const long h = rc.bottom - rc.top;
+	if (w <= 0 || h <= 0)
+	{
+		return;
+	}
+
+	// libvlc accepts crop geometry as a "<num>:<den>" aspect ratio (same as the
+	// --crop CLI option). Reduce by gcd so the string stays short and stable.
+	const long g = std::gcd(w, h);
+	char geom[32];
+	_snprintf_s(geom, sizeof(geom), _TRUNCATE, "%ld:%ld", w / g, h / g);
+	libvlc_video_set_crop_geometry(g_player.get(), geom);
 }
