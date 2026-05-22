@@ -20,7 +20,8 @@ VlcMediaList       g_mediaList;
 VlcMediaPlayer     g_player;
 VlcMedia           g_media;
 
-bool g_muted = false;
+bool g_muted     = false;
+bool g_autoMuted = false;
 
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
@@ -81,10 +82,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 			if (cmd == ID_TRAY_MUTE)
 			{
 				g_muted = !g_muted;
-				if (g_player)
-				{
-					libvlc_audio_set_mute(g_player.get(), g_muted ? 1 : 0);
-				}
+				ApplyEffectiveMute();
 				return 0;
 			}
 			if (cmd == ID_TRAY_AUTOSTART)

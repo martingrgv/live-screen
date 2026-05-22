@@ -88,7 +88,7 @@ HRESULT InitVlc(HWND hwnd, PCWSTR initialPath)
 	libvlc_media_list_player_set_playback_mode(listPlayer.get(), libvlc_playback_mode_loop);
 	libvlc_media_list_player_play(listPlayer.get());
 	libvlc_audio_set_volume(player.get(), 100);
-	libvlc_audio_set_mute(player.get(), g_muted ? 1 : 0);
+	libvlc_audio_set_mute(player.get(), (g_muted || g_autoMuted) ? 1 : 0);
 
 	// Commit: move locals into globals.
 	g_vlc        = std::move(vlc);
@@ -128,6 +128,26 @@ void ResumeWallpaper()
 		return;
 	}
 	libvlc_media_list_player_set_pause(g_listPlayer.get(), 0);
+}
+
+void ApplyEffectiveMute()
+{
+	if (!g_player)
+	{
+		return;
+	}
+	const bool effective = g_muted || g_autoMuted;
+	// Cache last-applied value: libvlc_audio_set_mute can synchronously poke
+	// the audio output module, and this is called from a WinEvent hook on the
+	// UI thread, so redundant calls show up as cursor stutter.
+	static int s_lastApplied = -1;
+	const int desired = effective ? 1 : 0;
+	if (s_lastApplied == desired)
+	{
+		return;
+	}
+	libvlc_audio_set_mute(g_player.get(), desired);
+	s_lastApplied = desired;
 }
 
 HRESULT PlayWallpaperPath(PCWSTR path)
@@ -182,7 +202,7 @@ HRESULT PlayWallpaperPath(PCWSTR path)
 	libvlc_media_list_player_play(g_listPlayer.get());
 
 	libvlc_audio_set_volume(g_player.get(), 100);
-	libvlc_audio_set_mute(g_player.get(), g_muted ? 1 : 0);
+	libvlc_audio_set_mute(g_player.get(), (g_muted || g_autoMuted) ? 1 : 0);
 
 	// Replace globals; old objects are released by the unique_ptr destructors.
 	g_mediaList = std::move(newMediaList);

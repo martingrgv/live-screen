@@ -15,5 +15,9 @@ void ShutdownVlc();
 void PauseWallpaper();
 void ResumeWallpaper();
 
+// Applies the effective mute state (g_muted || g_autoMuted) to the active
+// libvlc player. Safe to call before InitVlc (no-op).
+void ApplyEffectiveMute();
+
 // Switches the looped playlist to `path`. Safe to call after InitVlc succeeded.
 HRESULT PlayWallpaperPath(PCWSTR path);

@@ -35,6 +35,7 @@ extern VlcMediaPlayer     g_player;
 extern VlcMedia           g_media;
 
 extern bool g_muted;
+extern bool g_autoMuted;
 
 // Main window procedure (defined in App.cpp).
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
