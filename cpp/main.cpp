@@ -9,8 +9,13 @@
 //
 // All real work lives in the modules under src/.
 
+// initguid.h must precede windows.h so the power-setting GUIDs
+// (GUID_CONSOLE_DISPLAY_STATE, GUID_MONITOR_POWER_ON) get storage in this TU
+// instead of being declared `extern`.
+#include <initguid.h>
 #include <windows.h>
 #include <shellscalingapi.h>
+#include <wtsapi32.h>
 
 #include <string>
 
@@ -26,6 +31,7 @@
 
 #pragma comment(lib, "Shcore.lib")
 #pragma comment(lib, "User32.lib")
+#pragma comment(lib, "Wtsapi32.lib")
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR /*pCmdLine*/, int /*nCmdShow*/)
 {
@@ -230,6 +236,19 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR /*pCmdLine*/, int /*nC
 
 	ShowWindow(hwnd, SW_SHOWNA);
 
+	// Subscribe to display-power and system-suspend notifications so we can
+	// pause libvlc when the screen is off / dimmed or the machine is sleeping.
+	// GUID_CONSOLE_DISPLAY_STATE is Win8+ and finer-grained (on / off / dim);
+	// GUID_MONITOR_POWER_ON is the legacy fallback.
+	HPOWERNOTIFY displayPowerNotify = RegisterPowerSettingNotification(
+		hwnd, &GUID_CONSOLE_DISPLAY_STATE, DEVICE_NOTIFY_WINDOW_HANDLE);
+	HPOWERNOTIFY monitorPowerNotify = RegisterPowerSettingNotification(
+		hwnd, &GUID_MONITOR_POWER_ON, DEVICE_NOTIFY_WINDOW_HANDLE);
+
+	// Subscribe to session lock / unlock / disconnect so we pause while the
+	// workstation is locked or the RDP session is disconnected.
+	WTSRegisterSessionNotification(hwnd, NOTIFY_FOR_THIS_SESSION);
+
 	// Pause libvlc whenever a fullscreen / occluding app is in the foreground,
 	// so the wallpaper stops burning GPU/CPU under a game or video player.
 	StartOcclusionWatcher(hwnd);
@@ -242,6 +261,12 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR /*pCmdLine*/, int /*nC
 	}
 
 	StopOcclusionWatcher();
+
+	// WTSUnRegisterSessionNotification is called from WM_DESTROY (the HWND no
+	// longer exists here). Power notification handles aren't tied to the HWND
+	// lifetime in the same way and are safe to release after the loop.
+	if (displayPowerNotify) UnregisterPowerSettingNotification(displayPowerNotify);
+	if (monitorPowerNotify) UnregisterPowerSettingNotification(monitorPowerNotify);
 
 	// `tray` and `com` are torn down by their RAII destructors here.
 	return 0;

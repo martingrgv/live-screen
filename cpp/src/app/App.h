@@ -16,6 +16,11 @@ constexpr UINT ID_TRAY_MUTE             = 1003;
 constexpr UINT ID_TRAY_AUTOSTART        = 1004;
 constexpr UINT ID_TRAY_FILL_SCREEN      = 1005;
 
+// SetTimer id used by the presence/occlusion fallback poll. Borderless
+// fullscreen toggles inside an already-focused window don't always emit
+// EVENT_SYSTEM_FOREGROUND, so we re-check periodically as a backstop.
+constexpr UINT_PTR TIMER_ID_PRESENCE    = 2001;
+
 // -----------------------------------------------------------------------------
 // Shared application state
 //
@@ -37,6 +42,14 @@ extern VlcMedia           g_media;
 
 extern bool g_muted;
 extern bool g_autoMuted;
+
+// Independent reasons we may want to pause the wallpaper. Any of them being
+// true means libvlc should be paused; all clear means resume. See
+// `ApplyEffectivePause` in OcclusionWatcher for the policy.
+extern bool g_pauseFullscreen;   // a non-shell foreground app covers a whole monitor
+extern bool g_pauseDisplayOff;   // monitor is off / dimmed, or system is suspending
+extern bool g_pauseSessionLock;  // workstation locked / RDP session disconnected
+extern bool g_autoPaused;        // mirror of (any reason) currently applied to libvlc
 
 // When true, crop the video so it fills the wallpaper window (no black bars
 // on non-matching panels like 16:10 laptops). When false, libvlc letterboxes.

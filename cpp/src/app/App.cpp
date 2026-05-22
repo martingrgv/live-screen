@@ -1,10 +1,13 @@
 #include "app/App.h"
 
+#include "app/OcclusionWatcher.h"
 #include "app/Settings.h"
 #include "media/VlcPlayer.h"
 #include "ui/TrayIcon.h"
 #include "util/Autostart.h"
 #include "util/UniqueHandles.h"
+
+#include <wtsapi32.h>
 
 // -----------------------------------------------------------------------------
 // Global definitions (declared extern in App.h).
@@ -23,6 +26,10 @@ VlcMedia           g_media;
 
 bool g_muted     = false;
 bool g_autoMuted = false;
+bool g_pauseFullscreen  = false;
+bool g_pauseDisplayOff  = false;
+bool g_pauseSessionLock = false;
+bool g_autoPaused       = false;
 bool g_fillScreen = true;
 
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
@@ -35,6 +42,11 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 
 	case WM_DESTROY:
 	{
+		// Unregister WTS session notifications before tearing the window down.
+		// RegisterPowerSettingNotification handles are released in main.cpp
+		// after the message loop exits.
+		WTSUnRegisterSessionNotification(hwnd);
+
 		ShutdownVlc();
 
 		// Force the desktop layer to repaint where our child window used to be,
@@ -47,6 +59,92 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 		}
 
 		PostQuitMessage(0);
+		return 0;
+	}
+
+	case WM_TIMER:
+	{
+		if (wParam == TIMER_ID_PRESENCE)
+		{
+			RecheckPresence();
+			return 0;
+		}
+		break;
+	}
+
+	case WM_POWERBROADCAST:
+	{
+		if (wParam == PBT_POWERSETTINGCHANGE && lParam)
+		{
+			const POWERBROADCAST_SETTING* setting =
+				reinterpret_cast<const POWERBROADCAST_SETTING*>(lParam);
+			if (setting->DataLength >= sizeof(DWORD))
+			{
+				const DWORD data = *reinterpret_cast<const DWORD*>(setting->Data);
+				// GUID_CONSOLE_DISPLAY_STATE: 0 off, 1 on, 2 dimmed.
+				// GUID_MONITOR_POWER_ON:      0 off, 1 on.
+				// Treat anything other than "on" as off — dimmed monitors
+				// won't reliably show wallpaper anyway.
+				if (IsEqualGUID(setting->PowerSetting, GUID_CONSOLE_DISPLAY_STATE)
+					|| IsEqualGUID(setting->PowerSetting, GUID_MONITOR_POWER_ON))
+				{
+					const bool off = (data != 1);
+					if (off != g_pauseDisplayOff)
+					{
+						g_pauseDisplayOff = off;
+						ApplyEffectivePause();
+					}
+				}
+			}
+			return TRUE;
+		}
+		if (wParam == PBT_APMSUSPEND)
+		{
+			if (!g_pauseDisplayOff)
+			{
+				g_pauseDisplayOff = true;
+				ApplyEffectivePause();
+			}
+			return TRUE;
+		}
+		if (wParam == PBT_APMRESUMEAUTOMATIC || wParam == PBT_APMRESUMESUSPEND)
+		{
+			// On resume, also re-check fullscreen / display state in case
+			// the GUID_CONSOLE_DISPLAY_STATE event ordering puts us out of sync.
+			g_pauseDisplayOff = false;
+			ApplyEffectivePause();
+			RecheckPresence();
+			return TRUE;
+		}
+		break;
+	}
+
+	case WM_WTSSESSION_CHANGE:
+	{
+		switch (wParam)
+		{
+		case WTS_SESSION_LOCK:
+		case WTS_CONSOLE_DISCONNECT:
+		case WTS_REMOTE_DISCONNECT:
+		case WTS_SESSION_LOGOFF:
+			if (!g_pauseSessionLock)
+			{
+				g_pauseSessionLock = true;
+				ApplyEffectivePause();
+			}
+			return 0;
+		case WTS_SESSION_UNLOCK:
+		case WTS_CONSOLE_CONNECT:
+		case WTS_REMOTE_CONNECT:
+		case WTS_SESSION_LOGON:
+			if (g_pauseSessionLock)
+			{
+				g_pauseSessionLock = false;
+				ApplyEffectivePause();
+			}
+			RecheckPresence();
+			return 0;
+		}
 		return 0;
 	}
 
