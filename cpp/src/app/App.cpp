@@ -162,6 +162,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 			AppendMenu(menu.get(), MF_STRING | (g_fillScreen ? MF_CHECKED : MF_UNCHECKED), ID_TRAY_FILL_SCREEN, L"Fill screen (crop)");
 			AppendMenu(menu.get(), MF_STRING | (autostart ? MF_CHECKED : MF_UNCHECKED), ID_TRAY_AUTOSTART, L"Launch at startup");
 			AppendMenu(menu.get(), MF_STRING, ID_TRAY_CHANGE_WALLPAPER, L"Change Wallpaper");
+			AppendMenu(menu.get(), MF_STRING, ID_TRAY_RESTART, L"Restart video");
 			AppendMenu(menu.get(), MF_STRING, ID_TRAY_EXIT, L"Exit");
 
 			SetForegroundWindow(hwnd);
@@ -212,6 +213,11 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 				{
 					MessageBoxW(hwnd, L"Failed to change wallpaper", L"Error", MB_ICONERROR);
 				}
+				return 0;
+			}
+			if (cmd == ID_TRAY_RESTART)
+			{
+				RestartWallpaper();
 				return 0;
 			}
 		}

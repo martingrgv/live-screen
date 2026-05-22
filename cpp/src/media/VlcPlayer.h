@@ -22,6 +22,11 @@ void ApplyEffectiveMute();
 // Switches the looped playlist to `path`. Safe to call after InitVlc succeeded.
 HRESULT PlayWallpaperPath(PCWSTR path);
 
+// Seeks the currently playing item back to the start. Does not touch pause
+// state, so an auto-paused wallpaper stays paused and the seek takes effect
+// on resume. Safe to call before InitVlc (no-op).
+void RestartWallpaper();
+
 // Applies the current g_fillScreen preference to the active player. When the
 // flag is true, libvlc is told to crop the video to the window's aspect ratio
 // (fills non-16:9 panels like 16:10 laptops without distortion). When false,

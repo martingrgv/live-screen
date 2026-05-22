@@ -227,6 +227,15 @@ HRESULT PlayWallpaperPath(PCWSTR path)
 	return S_OK;
 }
 
+void RestartWallpaper()
+{
+	if (!g_player)
+	{
+		return;
+	}
+	libvlc_media_player_set_time(g_player.get(), 0);
+}
+
 void ApplyAspectMode(HWND hwnd)
 {
 	if (!g_player)

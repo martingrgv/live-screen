@@ -15,6 +15,7 @@ constexpr UINT ID_TRAY_CHANGE_WALLPAPER = 1002;
 constexpr UINT ID_TRAY_MUTE             = 1003;
 constexpr UINT ID_TRAY_AUTOSTART        = 1004;
 constexpr UINT ID_TRAY_FILL_SCREEN      = 1005;
+constexpr UINT ID_TRAY_RESTART          = 1006;
 
 // SetTimer id used by the presence/occlusion fallback poll. Borderless
 // fullscreen toggles inside an already-focused window don't always emit
