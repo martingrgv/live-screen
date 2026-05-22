@@ -22,6 +22,8 @@
 #include "util/ComApartment.h"
 #include "win/DesktopHost.h"
 
+#include "res/Resource.h"
+
 #pragma comment(lib, "Shcore.lib")
 #pragma comment(lib, "User32.lib")
 
@@ -42,14 +44,35 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR /*pCmdLine*/, int /*nC
 
 	const wchar_t* CLASS_NAME = L"Live Screen Window Class";
 
-	WNDCLASS wc = {};
-	wc.lpfnWndProc = WindowProc;
-	wc.hInstance = hInstance;
+	// Load the app icon from our embedded resources. LR_SHARED returns a cached
+	// HICON owned by the system — it must not be DestroyIcon-ed, which matches
+	// how WNDCLASSEX consumes hIcon/hIconSm (no cleanup required on shutdown).
+	HICON hIconLarge = static_cast<HICON>(LoadImageW(
+		hInstance,
+		MAKEINTRESOURCEW(IDI_APP_ICON),
+		IMAGE_ICON,
+		GetSystemMetrics(SM_CXICON),
+		GetSystemMetrics(SM_CYICON),
+		LR_DEFAULTCOLOR | LR_SHARED));
+	HICON hIconSmall = static_cast<HICON>(LoadImageW(
+		hInstance,
+		MAKEINTRESOURCEW(IDI_APP_ICON),
+		IMAGE_ICON,
+		GetSystemMetrics(SM_CXSMICON),
+		GetSystemMetrics(SM_CYSMICON),
+		LR_DEFAULTCOLOR | LR_SHARED));
+
+	WNDCLASSEX wc = {};
+	wc.cbSize        = sizeof(wc);
+	wc.lpfnWndProc   = WindowProc;
+	wc.hInstance     = hInstance;
 	wc.lpszClassName = CLASS_NAME;
 	// Black background avoids a white flash / leftover white area in letterboxed regions.
 	wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
+	wc.hIcon         = hIconLarge;
+	wc.hIconSm       = hIconSmall;
 
-	RegisterClass(&wc);
+	RegisterClassEx(&wc);
 
 	HWND workerw = GetWorkerW();
 

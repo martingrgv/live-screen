@@ -159,6 +159,13 @@ libvlccore.lib;%(AdditionalDependencies)</AdditionalDependencies>
     <ClInclude Include="src\util\UniqueHandles.h" />
     <ClInclude Include="src\util\Utf8.h" />
     <ClInclude Include="src\win\DesktopHost.h" />
+    <ClInclude Include="res\Resource.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="res\LiveScreen.rc" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="res\LiveScreen.ico" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

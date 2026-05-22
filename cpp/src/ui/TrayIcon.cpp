@@ -4,6 +4,8 @@
 #include "media/VlcPlayer.h"
 #include "util/UniqueHandles.h"
 
+#include "res/Resource.h"
+
 #include <shobjidl.h>
 #include <wrl/client.h>
 
@@ -16,7 +18,23 @@ TrayIcon::TrayIcon(HWND hwnd, UINT callbackMessage, PCWSTR tip)
 	nid_.uID              = 1;
 	nid_.uFlags           = NIF_MESSAGE | NIF_ICON | NIF_TIP;
 	nid_.uCallbackMessage = callbackMessage;
-	nid_.hIcon            = LoadIcon(nullptr, IDI_APPLICATION);
+
+	// Load the small (tray-sized) variant of the app icon from our own module's
+	// resources. LR_SHARED hands back a cached HICON that must not be
+	// DestroyIcon-ed — matches this class's existing no-cleanup contract.
+	const int cx = GetSystemMetrics(SM_CXSMICON);
+	const int cy = GetSystemMetrics(SM_CYSMICON);
+	nid_.hIcon = static_cast<HICON>(LoadImageW(
+		GetModuleHandleW(nullptr),
+		MAKEINTRESOURCEW(IDI_APP_ICON),
+		IMAGE_ICON,
+		cx,
+		cy,
+		LR_DEFAULTCOLOR | LR_SHARED));
+	if (nid_.hIcon == nullptr)
+	{
+		nid_.hIcon = LoadIcon(nullptr, IDI_APPLICATION);
+	}
 
 	wcscpy_s(nid_.szTip, tip);
 
