@@ -143,6 +143,7 @@ libvlccore.lib;%(AdditionalDependencies)</AdditionalDependencies>
     <ClCompile Include="src\app\Settings.cpp" />
     <ClCompile Include="src\media\VlcPlayer.cpp" />
     <ClCompile Include="src\ui\TrayIcon.cpp" />
+    <ClCompile Include="src\util\Autostart.cpp" />
     <ClCompile Include="src\util\Utf8.cpp" />
     <ClCompile Include="src\win\DesktopHost.cpp" />
   </ItemGroup>
@@ -153,6 +154,7 @@ libvlccore.lib;%(AdditionalDependencies)</AdditionalDependencies>
     <ClInclude Include="src\media\VlcHandles.h" />
     <ClInclude Include="src\media\VlcPlayer.h" />
     <ClInclude Include="src\ui\TrayIcon.h" />
+    <ClInclude Include="src\util\Autostart.h" />
     <ClInclude Include="src\util\ComApartment.h" />
     <ClInclude Include="src\util\UniqueHandles.h" />
     <ClInclude Include="src\util\Utf8.h" />

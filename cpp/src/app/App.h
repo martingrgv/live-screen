@@ -13,6 +13,7 @@ constexpr UINT WM_TRAYICON              = WM_USER + 1;
 constexpr UINT ID_TRAY_EXIT             = 1001;
 constexpr UINT ID_TRAY_CHANGE_WALLPAPER = 1002;
 constexpr UINT ID_TRAY_MUTE             = 1003;
+constexpr UINT ID_TRAY_AUTOSTART        = 1004;
 
 // -----------------------------------------------------------------------------
 // Shared application state
