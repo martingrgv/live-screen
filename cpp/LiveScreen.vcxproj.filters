@@ -57,6 +57,9 @@
     <ClCompile Include="src\app\Settings.cpp">
       <Filter>Source Files\app</Filter>
     </ClCompile>
+    <ClCompile Include="src\app\WallpaperLayout.cpp">
+      <Filter>Source Files\app</Filter>
+    </ClCompile>
     <ClCompile Include="src\media\MediaPlayer.cpp">
       <Filter>Source Files\media</Filter>
     </ClCompile>
@@ -72,6 +75,12 @@
     <ClCompile Include="src\win\DesktopHost.cpp">
       <Filter>Source Files\win</Filter>
     </ClCompile>
+    <ClCompile Include="src\win\Monitors.cpp">
+      <Filter>Source Files\win</Filter>
+    </ClCompile>
+    <ClCompile Include="src\win\RenderWindows.cpp">
+      <Filter>Source Files\win</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\app\App.h">
@@ -81,6 +90,9 @@
       <Filter>Header Files\app</Filter>
     </ClInclude>
     <ClInclude Include="src\app\Settings.h">
+      <Filter>Header Files\app</Filter>
+    </ClInclude>
+    <ClInclude Include="src\app\WallpaperLayout.h">
       <Filter>Header Files\app</Filter>
     </ClInclude>
     <ClInclude Include="src\media\MediaPlayer.h">
@@ -102,6 +114,12 @@
       <Filter>Header Files\util</Filter>
     </ClInclude>
     <ClInclude Include="src\win\DesktopHost.h">
+      <Filter>Header Files\win</Filter>
+    </ClInclude>
+    <ClInclude Include="src\win\Monitors.h">
+      <Filter>Header Files\win</Filter>
+    </ClInclude>
+    <ClInclude Include="src\win\RenderWindows.h">
       <Filter>Header Files\win</Filter>
     </ClInclude>
     <ClInclude Include="res\Resource.h">

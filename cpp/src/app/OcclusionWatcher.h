@@ -30,5 +30,5 @@ void RecheckPresence();
 
 // Pause iff any of g_pauseFullscreen / g_pauseDisplayOff / g_pauseSessionLock
 // is set; otherwise resume. Idempotent (mirrors state via g_autoPaused).
-// Safe to call before InitPlayer — MediaPlayer's Pause/Resume helpers no-op then.
+// Safe to call before any engine exists — MediaPlayer's Pause/Resume helpers no-op then.
 void ApplyEffectivePause();

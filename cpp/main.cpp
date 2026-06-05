@@ -1,11 +1,17 @@
 // Live Screen - entry point.
 //
 // Top-level orchestration only:
-//   * Win32 init (COM, DPI awareness, window class, window).
+//   * Win32 init (COM, DPI awareness, controller window class + window).
 //   * Desktop hooking via DesktopHost.
 //   * Tray icon registration via TrayIcon (RAII).
-//   * Media Foundation playback lifecycle via MediaPlayer.
+//   * Multi-monitor layout (renderer windows + Media Engines) via WallpaperLayout.
 //   * Standard message loop.
+//
+// The controller window is a hidden, persistent message sink: it owns the tray
+// icon and receives all notifications (tray, power, WTS, presence timer, display
+// change). The renderer windows that actually host the video are created and
+// destroyed around it as the multi-monitor layout changes, so the controller is
+// the one stable HWND for the lifetime of the app.
 //
 // All real work lives in the modules under src/.
 
@@ -22,6 +28,7 @@
 #include "app/App.h"
 #include "app/OcclusionWatcher.h"
 #include "app/Settings.h"
+#include "app/WallpaperLayout.h"
 #include "media/MediaPlayer.h"
 #include "ui/TrayIcon.h"
 #include "util/ComApartment.h"
@@ -41,117 +48,52 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR /*pCmdLine*/, int /*nC
 		return 0;
 	}
 
-	// Match physical pixels so our window size aligns with WorkerW (which is in physical pixels).
-	// Try Per-Monitor V2 first; fall back to system DPI awareness on older Windows.
+	// Match physical pixels so our windows size to the monitors / WorkerW (which
+	// are in physical pixels). Try Per-Monitor V2 first; fall back to system DPI
+	// awareness on older Windows.
 	if (!SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2))
 	{
 		SetProcessDpiAwareness(PROCESS_PER_MONITOR_DPI_AWARE);
 	}
 
-	const wchar_t* CLASS_NAME = L"Live Screen Window Class";
+	g_hInstance = hInstance;
+
+	const wchar_t* CONTROLLER_CLASS = L"Live Screen Controller Class";
 
 	// Load the app icon from our embedded resources. LR_SHARED returns a cached
 	// HICON owned by the system — it must not be DestroyIcon-ed, which matches
 	// how WNDCLASSEX consumes hIcon/hIconSm (no cleanup required on shutdown).
 	HICON hIconLarge = static_cast<HICON>(LoadImageW(
-		hInstance,
-		MAKEINTRESOURCEW(IDI_APP_ICON),
-		IMAGE_ICON,
-		GetSystemMetrics(SM_CXICON),
-		GetSystemMetrics(SM_CYICON),
+		hInstance, MAKEINTRESOURCEW(IDI_APP_ICON), IMAGE_ICON,
+		GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON),
 		LR_DEFAULTCOLOR | LR_SHARED));
 	HICON hIconSmall = static_cast<HICON>(LoadImageW(
-		hInstance,
-		MAKEINTRESOURCEW(IDI_APP_ICON),
-		IMAGE_ICON,
-		GetSystemMetrics(SM_CXSMICON),
-		GetSystemMetrics(SM_CYSMICON),
+		hInstance, MAKEINTRESOURCEW(IDI_APP_ICON), IMAGE_ICON,
+		GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON),
 		LR_DEFAULTCOLOR | LR_SHARED));
 
 	WNDCLASSEX wc = {};
 	wc.cbSize        = sizeof(wc);
 	wc.lpfnWndProc   = WindowProc;
 	wc.hInstance     = hInstance;
-	wc.lpszClassName = CLASS_NAME;
-	// Black background avoids a white flash / leftover white area in letterboxed regions.
-	wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
+	wc.lpszClassName = CONTROLLER_CLASS;
 	wc.hIcon         = hIconLarge;
 	wc.hIconSm       = hIconSmall;
 
 	RegisterClassEx(&wc);
 
-	HWND workerw = GetWorkerW();
+	// Hook (or spawn) the desktop wallpaper layer before creating renderers.
+	GetWorkerW();
 
-	// Compute the full virtual-screen rect so the wallpaper covers all monitors.
-	int x = GetSystemMetrics(SM_XVIRTUALSCREEN);
-	int y = GetSystemMetrics(SM_YVIRTUALSCREEN);
-	int width = GetSystemMetrics(SM_CXVIRTUALSCREEN);
-	int height = GetSystemMetrics(SM_CYVIRTUALSCREEN);
-
-	if (workerw && !g_raisedDesktop)
-	{
-		// Classic layout: WorkerW is the parent, child coords are relative to it.
-		RECT wr = {};
-		GetClientRect(workerw, &wr);
-		x = 0;
-		y = 0;
-		width = wr.right - wr.left;
-		height = wr.bottom - wr.top;
-	}
-
-	// Choose styles:
-	//   * Classic (parent = WorkerW)        -> WS_CHILD, parent passed to CreateWindowEx.
-	//   * Raised desktop (parent = Progman) -> create top-level WS_EX_LAYERED first, then
-	//                                          flip to WS_CHILD and SetParent (Lively pattern).
-	//   * No desktop hooked at all          -> WS_POPUP fallback covering the primary monitor.
-	DWORD style;
-	DWORD exStyle;
-	HWND createParent;
-	// WS_CLIPCHILDREN | WS_CLIPSIBLINGS lets DWM elide drawing under sibling windows
-	// (e.g. SHELLDLL_DefView icons) and avoids extra invalidation as the cursor passes
-	// over them, which otherwise contributes to cursor lag while the video plays.
-	const DWORD kClipStyles = WS_CLIPCHILDREN | WS_CLIPSIBLINGS;
-
-	if (g_raisedDesktop)
-	{
-		style = WS_POPUP | kClipStyles; // becomes WS_CHILD after SetParent
-		exStyle = WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW;
-		createParent = nullptr;
-	}
-	else if (workerw)
-	{
-		style = WS_CHILD | WS_VISIBLE | kClipStyles;
-		exStyle = WS_EX_NOACTIVATE;
-		createParent = workerw;
-	}
-	else
-	{
-		// No desktop layer found: fall back to a popup over the primary monitor.
-		MONITORINFO mi = {};
-		mi.cbSize = sizeof(mi);
-		HMONITOR hmon = MonitorFromPoint(POINT{ 0, 0 }, MONITOR_DEFAULTTOPRIMARY);
-		if (GetMonitorInfo(hmon, &mi))
-		{
-			x = mi.rcMonitor.left;
-			y = mi.rcMonitor.top;
-			width = mi.rcMonitor.right - mi.rcMonitor.left;
-			height = mi.rcMonitor.bottom - mi.rcMonitor.top;
-		}
-		style = WS_POPUP | WS_VISIBLE | kClipStyles;
-		exStyle = WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
-		createParent = nullptr;
-	}
-
+	// The controller window is never shown. It must be a real top-level window
+	// (not message-only) so it receives the WM_DISPLAYCHANGE broadcast.
 	HWND hwnd = CreateWindowEx(
-		exStyle,
-		CLASS_NAME,
-		L"Live Screen - Renderer",
-		style,
-		x,
-		y,
-		width,
-		height,
-		createParent,
+		0,
+		CONTROLLER_CLASS,
+		L"Live Screen",
+		WS_OVERLAPPED,
+		0, 0, 0, 0,
+		nullptr,
 		nullptr,
 		hInstance,
 		nullptr);
@@ -160,47 +102,26 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR /*pCmdLine*/, int /*nC
 	{
 		return 0;
 	}
-
-	if (g_raisedDesktop)
-	{
-		// Microsoft guidance for "raised desktop with layered ShellView" (Win11):
-		// our window must be a WS_EX_LAYERED child of Progman, z-ordered just below
-		// SHELLDLL_DefView (icons) but above the wallpaper WorkerW.
-		// Note: WS_EX_LAYERED must already be set BEFORE SetParent (set at create time).
-		SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
-		SetWindowLongPtr(hwnd, GWL_STYLE, WS_CHILD | WS_VISIBLE | kClipStyles);
-		SetParent(hwnd, g_progman);
-
-		if (g_shellDefView)
-		{
-			SetWindowPos(
-				hwnd,
-				g_shellDefView,
-				0, 0, 0, 0,
-				SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-		}
-
-		// Now size the child to cover the entire virtual screen (Progman client coords).
-		SetWindowPos(
-			hwnd,
-			nullptr,
-			GetSystemMetrics(SM_XVIRTUALSCREEN),
-			GetSystemMetrics(SM_YVIRTUALSCREEN),
-			GetSystemMetrics(SM_CXVIRTUALSCREEN),
-			GetSystemMetrics(SM_CYVIRTUALSCREEN),
-			SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
-	}
+	g_controllerHwnd = hwnd;
 
 	TrayIcon tray(hwnd, WM_TRAYICON, L"Live Screen");
 
-	// Load persisted display preferences before InitPlayer so the first frame is
-	// already rendered with the correct crop (no flash of letterboxed video).
+	// Load persisted display preferences before building the players so the first
+	// frame is already rendered with the correct crop and on the right monitors.
 	{
 		bool fill = true;
 		if (LoadFillScreen(fill) == S_OK)
 		{
 			g_fillScreen = fill;
 		}
+
+		MultiMonitorMode mode = MultiMonitorMode::Span;
+		if (LoadMultiMonitorMode(mode) == S_OK)
+		{
+			g_multiMonitorMode = mode;
+		}
+
+		LoadEnabledMonitors(g_enabledMonitors);
 	}
 
 	// Resolve which wallpaper to play:
@@ -208,7 +129,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR /*pCmdLine*/, int /*nC
 	//   2. Otherwise prompt the user once; persist their pick so subsequent
 	//      launches skip the dialog.
 	//   3. If the user cancels the initial prompt, exit cleanly — there is
-	//      nothing for the wallpaper window to display.
+	//      nothing for the wallpaper windows to display.
 	std::wstring wallpaperPath;
 	HRESULT loadHr = LoadWallpaperPath(wallpaperPath);
 	bool needsPrompt =
@@ -228,13 +149,14 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR /*pCmdLine*/, int /*nC
 		SaveWallpaperPath(wallpaperPath.c_str());
 	}
 
-	HRESULT hrPlayer = InitPlayer(hwnd, wallpaperPath.c_str());
+	// Bring up Media Foundation + the shared device, then build the renderer
+	// windows and engines for the active multi-monitor layout.
+	HRESULT hrPlayer = EnsurePlayerStarted(wallpaperPath.c_str());
 	if (FAILED(hrPlayer))
 	{
 		return 0;
 	}
-
-	ShowWindow(hwnd, SW_SHOWNA);
+	RebuildWallpaper();
 
 	// Subscribe to display-power and system-suspend notifications so we can
 	// pause playback when the screen is off / dimmed or the machine is sleeping.

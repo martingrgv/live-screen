@@ -135,16 +135,20 @@
     <ClCompile Include="src\app\App.cpp" />
     <ClCompile Include="src\app\OcclusionWatcher.cpp" />
     <ClCompile Include="src\app\Settings.cpp" />
+    <ClCompile Include="src\app\WallpaperLayout.cpp" />
     <ClCompile Include="src\media\MediaPlayer.cpp" />
     <ClCompile Include="src\ui\TrayIcon.cpp" />
     <ClCompile Include="src\util\Autostart.cpp" />
     <ClCompile Include="src\util\Utf8.cpp" />
     <ClCompile Include="src\win\DesktopHost.cpp" />
+    <ClCompile Include="src\win\Monitors.cpp" />
+    <ClCompile Include="src\win\RenderWindows.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\app\App.h" />
     <ClInclude Include="src\app\OcclusionWatcher.h" />
     <ClInclude Include="src\app\Settings.h" />
+    <ClInclude Include="src\app\WallpaperLayout.h" />
     <ClInclude Include="src\media\MediaPlayer.h" />
     <ClInclude Include="src\ui\TrayIcon.h" />
     <ClInclude Include="src\util\Autostart.h" />
@@ -152,6 +156,8 @@
     <ClInclude Include="src\util\UniqueHandles.h" />
     <ClInclude Include="src\util\Utf8.h" />
     <ClInclude Include="src\win\DesktopHost.h" />
+    <ClInclude Include="src\win\Monitors.h" />
+    <ClInclude Include="src\win\RenderWindows.h" />
     <ClInclude Include="res\Resource.h" />
   </ItemGroup>
   <ItemGroup>

@@ -2,10 +2,18 @@
 
 #include "app/OcclusionWatcher.h"
 #include "app/Settings.h"
+#include "app/WallpaperLayout.h"
 #include "media/MediaPlayer.h"
 #include "ui/TrayIcon.h"
 #include "util/Autostart.h"
 #include "util/UniqueHandles.h"
+#include "win/DesktopHost.h"
+#include "win/Monitors.h"
+#include "win/RenderWindows.h"
+
+#include <vector>
+
+#include <algorithm>
 
 #include <wtsapi32.h>
 
@@ -26,6 +34,12 @@ bool g_pauseSessionLock = false;
 bool g_autoPaused       = false;
 bool g_fillScreen = true;
 
+HINSTANCE g_hInstance      = nullptr;
+HWND      g_controllerHwnd = nullptr;
+
+MultiMonitorMode g_multiMonitorMode = MultiMonitorMode::Span;
+std::vector<std::wstring> g_enabledMonitors;
+
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
 	switch (uMsg)
@@ -43,7 +57,11 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 
 		ShutdownPlayer();
 
-		// Force the desktop layer to repaint where our child window used to be,
+		// Tear down the renderer windows once their engines have stopped
+		// presenting (ShutdownPlayer shuts the engines first).
+		DestroyRenderWindows();
+
+		// Force the desktop layer to repaint where our child windows used to be,
 		// otherwise stale pixels stay on screen.
 		HWND repaintTarget = g_raisedDesktop ? g_progman : g_workerw;
 		if (repaintTarget && IsWindow(repaintTarget))
@@ -63,7 +81,25 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 			RecheckPresence();
 			return 0;
 		}
+		if (wParam == TIMER_ID_DISPLAY)
+		{
+			// Debounced display-change rebuild. A monitor hot-plug or resolution
+			// change can recreate the wallpaper WorkerW, so re-hook the desktop
+			// before recomputing the layout and rebuilding the renderers.
+			KillTimer(hwnd, TIMER_ID_DISPLAY);
+			GetWorkerW();
+			RebuildWallpaper();
+			return 0;
+		}
 		break;
+	}
+
+	case WM_DISPLAYCHANGE:
+	{
+		// Coalesce the burst of notifications Windows sends while displays are
+		// reconfigured into a single rebuild a short moment later.
+		SetTimer(hwnd, TIMER_ID_DISPLAY, 500, nullptr);
+		return 0;
 	}
 
 	case WM_POWERBROADCAST:
@@ -151,9 +187,42 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 
 			const bool autostart = IsAutostartEnabled();
 
+			// Snapshot the monitors now; TrackPopupMenu is modal, so this list
+			// stays valid for the per-monitor command handling below.
+			const std::vector<MonitorEntry> monitors = EnumerateMonitors();
+
+			// "Multiple monitors" submenu: layout-mode radio group + a checkable
+			// toggle per connected monitor. The submenu HMENU is owned by `menu`
+			// (DestroyMenu recurses), so it needs no separate RAII handle.
+			HMENU mmMenu = CreatePopupMenu();
+			AppendMenu(mmMenu, MF_STRING, ID_TRAY_MM_SPAN, L"Span across all");
+			AppendMenu(mmMenu, MF_STRING, ID_TRAY_MM_MIRROR, L"Mirror on each");
+			AppendMenu(mmMenu, MF_STRING, ID_TRAY_MM_PRIMARY, L"Primary monitor only");
+			if (g_multiMonitorMode != MultiMonitorMode::Specific)
+			{
+				const UINT activePos =
+					g_multiMonitorMode == MultiMonitorMode::Mirror  ? 1 :
+					g_multiMonitorMode == MultiMonitorMode::Primary ? 2 : 0;
+				CheckMenuRadioItem(mmMenu, 0, 2, activePos, MF_BYPOSITION);
+			}
+			AppendMenu(mmMenu, MF_SEPARATOR, 0, nullptr);
+			for (size_t i = 0; i < monitors.size(); ++i)
+			{
+				const bool on =
+					g_multiMonitorMode == MultiMonitorMode::Specific &&
+					std::find(g_enabledMonitors.begin(), g_enabledMonitors.end(),
+						monitors[i].device) != g_enabledMonitors.end();
+				AppendMenu(
+					mmMenu,
+					MF_STRING | (on ? MF_CHECKED : MF_UNCHECKED),
+					ID_TRAY_MM_MONITOR_BASE + static_cast<UINT>(i),
+					monitors[i].label.c_str());
+			}
+
 			UniqueHMenu menu(CreatePopupMenu());
 			AppendMenu(menu.get(), MF_STRING | (g_muted ? MF_CHECKED : MF_UNCHECKED), ID_TRAY_MUTE, L"Mute");
 			AppendMenu(menu.get(), MF_STRING | (g_fillScreen ? MF_CHECKED : MF_UNCHECKED), ID_TRAY_FILL_SCREEN, L"Fill screen (crop)");
+			AppendMenu(menu.get(), MF_POPUP, reinterpret_cast<UINT_PTR>(mmMenu), L"Multiple monitors");
 			AppendMenu(menu.get(), MF_STRING | (autostart ? MF_CHECKED : MF_UNCHECKED), ID_TRAY_AUTOSTART, L"Launch at startup");
 			AppendMenu(menu.get(), MF_STRING, ID_TRAY_CHANGE_WALLPAPER, L"Change Wallpaper");
 			AppendMenu(menu.get(), MF_STRING, ID_TRAY_RESTART, L"Restart video");
@@ -184,8 +253,43 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 			if (cmd == ID_TRAY_FILL_SCREEN)
 			{
 				g_fillScreen = !g_fillScreen;
-				ApplyAspectMode(hwnd);
+				ApplyAspectMode();
 				SaveFillScreen(g_fillScreen);
+				return 0;
+			}
+			if (cmd == ID_TRAY_MM_SPAN || cmd == ID_TRAY_MM_MIRROR || cmd == ID_TRAY_MM_PRIMARY)
+			{
+				const MultiMonitorMode newMode =
+					cmd == ID_TRAY_MM_MIRROR  ? MultiMonitorMode::Mirror  :
+					cmd == ID_TRAY_MM_PRIMARY ? MultiMonitorMode::Primary :
+												MultiMonitorMode::Span;
+				if (newMode != g_multiMonitorMode)
+				{
+					g_multiMonitorMode = newMode;
+					SaveMultiMonitorMode(g_multiMonitorMode);
+					RebuildWallpaper();
+				}
+				return 0;
+			}
+			if (cmd >= static_cast<int>(ID_TRAY_MM_MONITOR_BASE) &&
+				cmd < static_cast<int>(ID_TRAY_MM_MONITOR_BASE + monitors.size()))
+			{
+				const std::wstring& device =
+					monitors[cmd - static_cast<int>(ID_TRAY_MM_MONITOR_BASE)].device;
+				auto it = std::find(g_enabledMonitors.begin(), g_enabledMonitors.end(), device);
+				if (it != g_enabledMonitors.end())
+				{
+					g_enabledMonitors.erase(it);
+				}
+				else
+				{
+					g_enabledMonitors.push_back(device);
+				}
+				// Toggling a specific monitor implies Specific mode.
+				g_multiMonitorMode = MultiMonitorMode::Specific;
+				SaveMultiMonitorMode(g_multiMonitorMode);
+				SaveEnabledMonitors(g_enabledMonitors);
+				RebuildWallpaper();
 				return 0;
 			}
 			if (cmd == ID_TRAY_AUTOSTART)

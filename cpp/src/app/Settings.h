@@ -2,6 +2,9 @@
 
 #include <windows.h>
 #include <string>
+#include <vector>
+
+#include "app/App.h"
 
 // Persistence for user-tunable settings.
 //
@@ -25,3 +28,17 @@ HRESULT LoadFillScreen(bool& out);
 
 // Persists the "fill screen" (crop-to-window) preference.
 HRESULT SaveFillScreen(bool value);
+
+// Loads the multi-monitor layout mode. Returns S_OK and fills `out` when a value
+// is stored, S_FALSE when no value has been saved yet (caller keeps its default).
+HRESULT LoadMultiMonitorMode(MultiMonitorMode& out);
+
+// Persists the multi-monitor layout mode.
+HRESULT SaveMultiMonitorMode(MultiMonitorMode value);
+
+// Loads the set of enabled monitor device names (Specific mode). Returns S_OK
+// and fills `out` when a value is stored, S_FALSE when none has been saved yet.
+HRESULT LoadEnabledMonitors(std::vector<std::wstring>& out);
+
+// Persists the set of enabled monitor device names (Specific mode).
+HRESULT SaveEnabledMonitors(const std::vector<std::wstring>& value);

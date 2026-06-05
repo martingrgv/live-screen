@@ -7,7 +7,10 @@
 #include <d3d11.h>
 #include <wrl/client.h>
 
+#include <memory>
 #include <new>
+#include <string>
+#include <vector>
 
 // Media Foundation + Direct3D import libraries. Declared here (rather than in
 // the vcxproj) to keep the backend's dependencies self-contained, matching the
@@ -21,32 +24,43 @@ namespace
 	using Microsoft::WRL::ComPtr;
 
 	// -------------------------------------------------------------------------
-	// Encapsulated player state. The Media Engine keeps everything private to
-	// this translation unit and reaches into App.h only for the shared
-	// user-preference flags (g_muted / g_autoMuted / g_fillScreen / g_autoPaused).
+	// One Media Engine bound to one renderer window. Multi-monitor layouts use
+	// several of these; they share the D3D11 device / DXGI manager below.
 	// -------------------------------------------------------------------------
-	bool                         s_mfStarted      = false;
+	struct EngineInstance
+	{
+		ComPtr<IMFMediaEngine>       engine;
+		ComPtr<IMFMediaEngineEx>     engineEx;   // optional; enables crop-to-fill
+		ComPtr<IMFMediaEngineNotify> notify;
+		HWND                         hwnd            = nullptr;
+		// Last value handed to SetMuted; -1 means "unknown / force re-apply".
+		int                          lastMuteApplied = -1;
+	};
+
+	// -------------------------------------------------------------------------
+	// Shared, process-wide player state. The engines reach into App.h only for
+	// the shared user-preference flags (g_muted / g_autoMuted / g_fillScreen /
+	// g_autoPaused).
+	// -------------------------------------------------------------------------
+	bool                         s_mfStarted = false;
 	ComPtr<ID3D11Device>         s_d3dDevice;
 	ComPtr<IMFDXGIDeviceManager> s_dxgiManager;
-	ComPtr<IMFMediaEngine>       s_engine;
-	ComPtr<IMFMediaEngineEx>     s_engineEx;     // optional; enables crop-to-fill
-	ComPtr<IMFMediaEngineNotify> s_notify;
-	HWND                         s_hwnd           = nullptr;
+	std::wstring                 s_currentPath;
 
-	// Last value handed to SetMuted; -1 means "unknown / force re-apply". Avoids
-	// redundant SetMuted calls from the occlusion watcher on the UI thread.
-	int                          s_lastMuteApplied = -1;
+	// Stable storage: unique_ptr keeps each instance's address fixed even as the
+	// vector grows, so the notify callback can hold a raw EngineInstance*.
+	std::vector<std::unique_ptr<EngineInstance>> s_engines;
 
-	void OnMediaEngineEvent(DWORD event, DWORD_PTR param1, DWORD param2);
+	void OnEngineEvent(EngineInstance* inst, DWORD event);
 
 	// IMFMediaEngineNotify is mandatory: the class factory refuses to create an
-	// engine without a callback. It simply forwards engine events to the
-	// file-scope handler below. Events arrive on a Media Foundation worker
-	// thread.
+	// engine without a callback. It forwards engine events, tagged with the
+	// owning instance, to the file-scope handler below. Events arrive on a Media
+	// Foundation worker thread.
 	class MediaEngineNotify final : public IMFMediaEngineNotify
 	{
 	public:
-		MediaEngineNotify() = default;
+		explicit MediaEngineNotify(EngineInstance* owner) : m_owner(owner) {}
 
 		// IUnknown -----------------------------------------------------------
 		STDMETHODIMP QueryInterface(REFIID riid, void** ppv) override
@@ -81,32 +95,33 @@ namespace
 		}
 
 		// IMFMediaEngineNotify ----------------------------------------------
-		STDMETHODIMP EventNotify(DWORD event, DWORD_PTR param1, DWORD param2) override
+		STDMETHODIMP EventNotify(DWORD event, DWORD_PTR /*param1*/, DWORD /*param2*/) override
 		{
-			OnMediaEngineEvent(event, param1, param2);
+			OnEngineEvent(m_owner, event);
 			return S_OK;
 		}
 
 	private:
-		LONG m_ref = 1;
+		EngineInstance* m_owner;
+		LONG            m_ref = 1;
 	};
 
-	// Points the engine at a local file. SetSource mirrors the HTML5 <video>
-	// src attribute: assigning it implicitly (re)loads the media, which fires
+	// Points an engine at a local file. SetSource mirrors the HTML5 <video> src
+	// attribute: assigning it implicitly (re)loads the media, which fires
 	// LOADEDMETADATA then CANPLAY on the notify callback.
-	HRESULT SetEngineSource(PCWSTR path)
+	HRESULT SetEngineSource(IMFMediaEngine* engine, PCWSTR path)
 	{
 		BSTR url = SysAllocString(path);
 		if (!url)
 		{
 			return E_OUTOFMEMORY;
 		}
-		const HRESULT hr = s_engine->SetSource(url);
+		const HRESULT hr = engine->SetSource(url);
 		SysFreeString(url);
 		return hr;
 	}
 
-	// Creates the D3D11 device the Media Engine uses to hardware-decode and
+	// Creates the D3D11 device the Media Engines use to hardware-decode and
 	// present. BGRA support is required for the video output format; VIDEO
 	// support enables the hardware decoder. Falls back to WARP (software) if no
 	// GPU device is available so playback never fails outright.
@@ -137,8 +152,8 @@ namespace
 			return hr;
 		}
 
-		// The device is shared between the engine's decode thread and its
-		// presenter, so it must allow multithreaded access.
+		// The device is shared between the engines' decode threads and their
+		// presenters, so it must allow multithreaded access.
 		ComPtr<ID3D10Multithread> multithread;
 		if (SUCCEEDED(s_d3dDevice.As(&multithread)))
 		{
@@ -147,64 +162,212 @@ namespace
 		return S_OK;
 	}
 
-	// Releases everything in dependency order. Calling Shutdown() first stops
-	// the engine dispatching further events before we drop our references.
-	void ReleaseAll()
+	// Applies the current g_fillScreen preference to one instance, using that
+	// instance's own window aspect.
+	void ApplyAspectToInstance(EngineInstance& inst)
 	{
-		if (s_engine)
+		if (!inst.engine || !inst.engineEx)
 		{
-			s_engine->Shutdown();
+			// Without IMFMediaEngineEx we cannot set source/destination rects;
+			// the engine letterboxes by default, which is the non-fill behaviour.
+			return;
 		}
-		s_engineEx.Reset();
-		s_engine.Reset();
-		s_notify.Reset();
-		s_dxgiManager.Reset();
-		s_d3dDevice.Reset();
-		s_hwnd = nullptr;
-		s_lastMuteApplied = -1;
-		if (s_mfStarted)
+		if (!inst.hwnd || !IsWindow(inst.hwnd))
 		{
-			MFShutdown();
-			s_mfStarted = false;
+			return;
 		}
+
+		DWORD vw = 0;
+		DWORD vh = 0;
+		if (FAILED(inst.engine->GetNativeVideoSize(&vw, &vh)) || vw == 0 || vh == 0)
+		{
+			return; // metadata not loaded yet; LOADEDMETADATA will call us again
+		}
+
+		RECT rc{};
+		if (!GetClientRect(inst.hwnd, &rc))
+		{
+			return;
+		}
+		const LONG ww = rc.right - rc.left;
+		const LONG wh = rc.bottom - rc.top;
+		if (ww <= 0 || wh <= 0)
+		{
+			return;
+		}
+
+		const double winAspect = static_cast<double>(ww) / wh;
+		const double vidAspect = static_cast<double>(vw) / vh;
+
+		MFVideoNormalizedRect src{ 0.0f, 0.0f, 1.0f, 1.0f };
+		RECT dst{ 0, 0, ww, wh };
+
+		if (g_fillScreen)
+		{
+			// Crop the source to the window aspect, then stretch the cropped
+			// region over the whole window. Because the cropped region already
+			// has the window's aspect ratio, the stretch introduces no distortion.
+			if (winAspect >= vidAspect)
+			{
+				// Window is wider than the video: crop top & bottom.
+				const double keep = vidAspect / winAspect;
+				const float inset = static_cast<float>((1.0 - keep) / 2.0);
+				src.top    = inset;
+				src.bottom = 1.0f - inset;
+			}
+			else
+			{
+				// Window is taller / narrower than the video: crop left & right.
+				const double keep = winAspect / vidAspect;
+				const float inset = static_cast<float>((1.0 - keep) / 2.0);
+				src.left  = inset;
+				src.right = 1.0f - inset;
+			}
+		}
+		else
+		{
+			// Letterbox: keep the full source but shrink the destination to the
+			// video aspect and center it. The window's black background paints
+			// the bars.
+			if (vidAspect >= winAspect)
+			{
+				const LONG h = static_cast<LONG>(ww / vidAspect + 0.5);
+				const LONG y = (wh - h) / 2;
+				dst = { 0, y, ww, y + h };
+			}
+			else
+			{
+				const LONG w = static_cast<LONG>(wh * vidAspect + 0.5);
+				const LONG x = (ww - w) / 2;
+				dst = { x, 0, x + w, wh };
+			}
+		}
+
+		inst.engineEx->UpdateVideoStream(&src, &dst, nullptr);
 	}
 
-	void OnMediaEngineEvent(DWORD event, DWORD_PTR /*param1*/, DWORD /*param2*/)
+	void ApplyMuteToInstance(EngineInstance& inst)
 	{
+		if (!inst.engine)
+		{
+			return;
+		}
+		const BOOL desired = (g_muted || g_autoMuted) ? TRUE : FALSE;
+		if (inst.lastMuteApplied == static_cast<int>(desired))
+		{
+			return;
+		}
+		inst.engine->SetMuted(desired);
+		inst.lastMuteApplied = desired;
+	}
+
+	void OnEngineEvent(EngineInstance* inst, DWORD event)
+	{
+		if (!inst)
+		{
+			return;
+		}
 		switch (event)
 		{
 		case MF_MEDIA_ENGINE_EVENT_LOADEDMETADATA:
-			// Native video size is known now: (re)apply crop / letterbox for
-			// the new clip's dimensions.
-			ApplyAspectMode(s_hwnd);
+			// Native video size is known now: (re)apply crop / letterbox for the
+			// new clip's dimensions.
+			ApplyAspectToInstance(*inst);
 			break;
 
 		case MF_MEDIA_ENGINE_EVENT_CANPLAY:
-			// Start playback unless a pause reason (fullscreen app, display
-			// off, session locked) is currently active — otherwise we would
-			// override an auto-pause that raced ahead of the load.
-			if (s_engine && !g_autoPaused)
+			// Start playback unless a pause reason (fullscreen app, display off,
+			// session locked) is currently active — otherwise we would override
+			// an auto-pause that raced ahead of the load.
+			if (inst->engine && !g_autoPaused)
 			{
-				s_engine->Play();
+				inst->engine->Play();
 			}
-			ApplyAspectMode(s_hwnd);
+			ApplyAspectToInstance(*inst);
 			break;
 
 		default:
 			break;
 		}
 	}
+
+	// Creates one engine for `hwnd` rendering the current path. On success the
+	// new instance is appended to s_engines.
+	HRESULT CreateEngineForWindow(HWND hwnd)
+	{
+		auto inst = std::make_unique<EngineInstance>();
+		inst->hwnd = hwnd;
+
+		ComPtr<MediaEngineNotify> notify;
+		notify.Attach(new (std::nothrow) MediaEngineNotify(inst.get()));
+		if (!notify)
+		{
+			return E_OUTOFMEMORY;
+		}
+
+		// Engine creation attributes:
+		//   DXGI_MANAGER         - share our D3D11 device for HW decode + present.
+		//   CALLBACK             - the (mandatory) event sink.
+		//   PLAYBACK_HWND        - render directly into this renderer window.
+		//   VIDEO_OUTPUT_FORMAT  - match the BGRA device we created.
+		ComPtr<IMFAttributes> attributes;
+		HRESULT hr = MFCreateAttributes(&attributes, 4);
+		if (FAILED(hr))
+		{
+			return hr;
+		}
+		attributes->SetUnknown(MF_MEDIA_ENGINE_DXGI_MANAGER, s_dxgiManager.Get());
+		attributes->SetUnknown(MF_MEDIA_ENGINE_CALLBACK, notify.Get());
+		attributes->SetUINT64(MF_MEDIA_ENGINE_PLAYBACK_HWND, reinterpret_cast<UINT64>(hwnd));
+		attributes->SetUINT32(MF_MEDIA_ENGINE_VIDEO_OUTPUT_FORMAT, DXGI_FORMAT_B8G8R8A8_UNORM);
+
+		ComPtr<IMFMediaEngineClassFactory> factory;
+		hr = CoCreateInstance(
+			CLSID_MFMediaEngineClassFactory, nullptr,
+			CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory));
+		if (FAILED(hr))
+		{
+			return hr;
+		}
+
+		hr = factory->CreateInstance(0, attributes.Get(), inst->engine.ReleaseAndGetAddressOf());
+		if (FAILED(hr))
+		{
+			return hr;
+		}
+
+		inst->engine.As(&inst->engineEx); // Win8+; null-tolerant (only crop-to-fill needs it)
+		inst->notify = notify;
+
+		inst->engine->SetLoop(TRUE);
+		inst->engine->SetVolume(1.0);
+
+		hr = SetEngineSource(inst->engine.Get(), s_currentPath.c_str());
+		if (FAILED(hr))
+		{
+			inst->engine->Shutdown();
+			return hr;
+		}
+
+		// Playback begins from the CANPLAY handler; crop is applied from
+		// LOADEDMETADATA once the native video size is known. Mute is applied by
+		// the caller (ApplyEffectiveMute) across all engines.
+		s_engines.push_back(std::move(inst));
+		return S_OK;
+	}
 }
 
-HRESULT InitPlayer(HWND hwnd, PCWSTR initialPath)
+HRESULT EnsurePlayerStarted(PCWSTR initialPath)
 {
-	if (!hwnd || !initialPath || !*initialPath)
+	if (!initialPath || !*initialPath)
 	{
 		return E_INVALIDARG;
 	}
-	if (s_engine)
+	s_currentPath = initialPath;
+
+	if (s_mfStarted && s_d3dDevice && s_dxgiManager)
 	{
-		return S_OK; // already initialized
+		return S_OK; // already started
 	}
 
 	HRESULT hr = MFStartup(MF_VERSION, MFSTARTUP_FULL);
@@ -217,242 +380,172 @@ HRESULT InitPlayer(HWND hwnd, PCWSTR initialPath)
 	hr = CreateD3D11Device();
 	if (FAILED(hr))
 	{
-		ReleaseAll();
+		ShutdownPlayer();
 		return hr;
 	}
 
-	// Wrap the device in a DXGI device manager so the engine can share it.
+	// Wrap the device in a DXGI device manager so the engines can share it.
 	UINT resetToken = 0;
 	hr = MFCreateDXGIDeviceManager(&resetToken, &s_dxgiManager);
 	if (FAILED(hr))
 	{
-		ReleaseAll();
+		ShutdownPlayer();
 		return hr;
 	}
 	hr = s_dxgiManager->ResetDevice(s_d3dDevice.Get(), resetToken);
 	if (FAILED(hr))
 	{
-		ReleaseAll();
+		ShutdownPlayer();
 		return hr;
 	}
 
-	ComPtr<MediaEngineNotify> notify;
-	notify.Attach(new (std::nothrow) MediaEngineNotify());
-	if (!notify)
-	{
-		ReleaseAll();
-		return E_OUTOFMEMORY;
-	}
-
-	// Engine creation attributes:
-	//   DXGI_MANAGER         - share our D3D11 device for HW decode + present.
-	//   CALLBACK             - the (mandatory) event sink.
-	//   PLAYBACK_HWND        - render directly into the wallpaper window.
-	//   VIDEO_OUTPUT_FORMAT  - match the BGRA device we created.
-	ComPtr<IMFAttributes> attributes;
-	hr = MFCreateAttributes(&attributes, 4);
-	if (FAILED(hr))
-	{
-		ReleaseAll();
-		return hr;
-	}
-	attributes->SetUnknown(MF_MEDIA_ENGINE_DXGI_MANAGER, s_dxgiManager.Get());
-	attributes->SetUnknown(MF_MEDIA_ENGINE_CALLBACK, notify.Get());
-	attributes->SetUINT64(MF_MEDIA_ENGINE_PLAYBACK_HWND, reinterpret_cast<UINT64>(hwnd));
-	attributes->SetUINT32(MF_MEDIA_ENGINE_VIDEO_OUTPUT_FORMAT, DXGI_FORMAT_B8G8R8A8_UNORM);
-
-	ComPtr<IMFMediaEngineClassFactory> factory;
-	hr = CoCreateInstance(
-		CLSID_MFMediaEngineClassFactory, nullptr,
-		CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory));
-	if (FAILED(hr))
-	{
-		ReleaseAll();
-		return hr;
-	}
-
-	hr = factory->CreateInstance(0, attributes.Get(), s_engine.ReleaseAndGetAddressOf());
-	if (FAILED(hr))
-	{
-		ReleaseAll();
-		return hr;
-	}
-
-	s_engine.As(&s_engineEx); // Win8+; null-tolerant (only crop-to-fill needs it)
-	s_notify = notify;
-	s_hwnd   = hwnd;
-
-	s_engine->SetLoop(TRUE);
-	s_engine->SetVolume(1.0);
-
-	hr = SetEngineSource(initialPath);
-	if (FAILED(hr))
-	{
-		ReleaseAll();
-		return hr;
-	}
-
-	s_lastMuteApplied = -1;
-	ApplyEffectiveMute();
-
-	// Playback begins from the CANPLAY handler; crop is applied from
-	// LOADEDMETADATA once the native video size is known.
 	return S_OK;
+}
+
+HRESULT SetRenderTargets(const std::vector<HWND>& windows)
+{
+	// Release any existing engines before creating the new ones so we never have
+	// two engines presenting to overlapping windows.
+	ReleaseRenderTargets();
+
+	if (!s_d3dDevice || !s_dxgiManager)
+	{
+		return E_FAIL; // EnsurePlayerStarted not called / failed
+	}
+
+	HRESULT firstErr = S_OK;
+	for (HWND hwnd : windows)
+	{
+		if (!hwnd)
+		{
+			continue;
+		}
+		HRESULT hr = CreateEngineForWindow(hwnd);
+		if (FAILED(hr) && SUCCEEDED(firstErr))
+		{
+			firstErr = hr;
+		}
+	}
+
+	// Apply the user's mute preference to the freshly created engines.
+	ApplyEffectiveMute();
+	return firstErr;
+}
+
+void ReleaseRenderTargets()
+{
+	// Calling Shutdown() first stops each engine dispatching further events
+	// before we drop our references (and its renderer window is destroyed).
+	for (auto& inst : s_engines)
+	{
+		if (inst && inst->engine)
+		{
+			inst->engine->Shutdown();
+		}
+	}
+	s_engines.clear();
 }
 
 void ShutdownPlayer()
 {
-	ReleaseAll();
+	ReleaseRenderTargets();
+	s_dxgiManager.Reset();
+	s_d3dDevice.Reset();
+	if (s_mfStarted)
+	{
+		MFShutdown();
+		s_mfStarted = false;
+	}
+	s_currentPath.clear();
 }
 
 void PauseWallpaper()
 {
-	if (s_engine)
+	for (auto& inst : s_engines)
 	{
-		s_engine->Pause();
+		if (inst && inst->engine)
+		{
+			inst->engine->Pause();
+		}
 	}
 }
 
 void ResumeWallpaper()
 {
-	if (s_engine)
+	for (auto& inst : s_engines)
 	{
-		s_engine->Play();
+		if (inst && inst->engine)
+		{
+			inst->engine->Play();
+		}
 	}
 }
 
 void ApplyEffectiveMute()
 {
-	if (!s_engine)
+	for (auto& inst : s_engines)
 	{
-		return;
+		if (inst)
+		{
+			ApplyMuteToInstance(*inst);
+		}
 	}
-	const BOOL desired = (g_muted || g_autoMuted) ? TRUE : FALSE;
-	if (s_lastMuteApplied == static_cast<int>(desired))
-	{
-		return;
-	}
-	s_engine->SetMuted(desired);
-	s_lastMuteApplied = desired;
 }
 
 HRESULT PlayWallpaperPath(PCWSTR path)
 {
-	if (!s_engine || !path || !*path)
+	if (!path || !*path)
 	{
 		return E_INVALIDARG;
 	}
+	s_currentPath = path;
 
-	// Re-pointing SetSource reloads the pipeline; the engine releases the
-	// previous decoder / presenter for us (no manual stop required).
-	HRESULT hr = SetEngineSource(path);
-	if (FAILED(hr))
+	HRESULT firstErr = S_OK;
+	for (auto& inst : s_engines)
 	{
-		return hr;
+		if (!inst || !inst->engine)
+		{
+			continue;
+		}
+		// Re-pointing SetSource reloads the pipeline; the engine releases the
+		// previous decoder / presenter for us (no manual stop required).
+		HRESULT hr = SetEngineSource(inst->engine.Get(), path);
+		if (FAILED(hr))
+		{
+			if (SUCCEEDED(firstErr))
+			{
+				firstErr = hr;
+			}
+			continue;
+		}
+		inst->engine->SetLoop(TRUE);
+		// Force mute re-apply to the fresh pipeline; CANPLAY restarts playback
+		// and LOADEDMETADATA re-applies the crop for the new clip's dimensions.
+		inst->lastMuteApplied = -1;
 	}
 
-	s_engine->SetLoop(TRUE);
-
-	// Force mute re-apply to the fresh pipeline; CANPLAY restarts playback and
-	// LOADEDMETADATA re-applies the crop for the new clip's dimensions.
-	s_lastMuteApplied = -1;
 	ApplyEffectiveMute();
-	return S_OK;
+	return firstErr;
 }
 
 void RestartWallpaper()
 {
-	if (s_engine)
+	for (auto& inst : s_engines)
 	{
-		s_engine->SetCurrentTime(0.0);
+		if (inst && inst->engine)
+		{
+			inst->engine->SetCurrentTime(0.0);
+		}
 	}
 }
 
-void ApplyAspectMode(HWND hwnd)
+void ApplyAspectMode()
 {
-	if (!s_engine)
+	for (auto& inst : s_engines)
 	{
-		return;
-	}
-
-	HWND target = (hwnd && IsWindow(hwnd)) ? hwnd : s_hwnd;
-	if (!target || !IsWindow(target))
-	{
-		return;
-	}
-
-	DWORD vw = 0;
-	DWORD vh = 0;
-	if (FAILED(s_engine->GetNativeVideoSize(&vw, &vh)) || vw == 0 || vh == 0)
-	{
-		return; // metadata not loaded yet; LOADEDMETADATA will call us again
-	}
-
-	// Without IMFMediaEngineEx we cannot set source/destination rects; the
-	// engine letterboxes by default, which is the non-fill behaviour anyway.
-	if (!s_engineEx)
-	{
-		return;
-	}
-
-	RECT rc{};
-	if (!GetClientRect(target, &rc))
-	{
-		return;
-	}
-	const LONG ww = rc.right - rc.left;
-	const LONG wh = rc.bottom - rc.top;
-	if (ww <= 0 || wh <= 0)
-	{
-		return;
-	}
-
-	const double winAspect = static_cast<double>(ww) / wh;
-	const double vidAspect = static_cast<double>(vw) / vh;
-
-	MFVideoNormalizedRect src{ 0.0f, 0.0f, 1.0f, 1.0f };
-	RECT dst{ 0, 0, ww, wh };
-
-	if (g_fillScreen)
-	{
-		// Crop the source to the window aspect, then stretch the cropped region
-		// over the whole window. Because the cropped region already has the
-		// window's aspect ratio, the stretch introduces no distortion.
-		if (winAspect >= vidAspect)
+		if (inst)
 		{
-			// Window is wider than the video: crop top & bottom.
-			const double keep = vidAspect / winAspect;
-			const float inset = static_cast<float>((1.0 - keep) / 2.0);
-			src.top    = inset;
-			src.bottom = 1.0f - inset;
-		}
-		else
-		{
-			// Window is taller / narrower than the video: crop left & right.
-			const double keep = winAspect / vidAspect;
-			const float inset = static_cast<float>((1.0 - keep) / 2.0);
-			src.left  = inset;
-			src.right = 1.0f - inset;
+			ApplyAspectToInstance(*inst);
 		}
 	}
-	else
-	{
-		// Letterbox: keep the full source but shrink the destination to the
-		// video aspect and center it. The window's black background paints the
-		// bars.
-		if (vidAspect >= winAspect)
-		{
-			const LONG h = static_cast<LONG>(ww / vidAspect + 0.5);
-			const LONG y = (wh - h) / 2;
-			dst = { 0, y, ww, y + h };
-		}
-		else
-		{
-			const LONG w = static_cast<LONG>(wh * vidAspect + 0.5);
-			const LONG x = (ww - w) / 2;
-			dst = { x, 0, x + w, wh };
-		}
-	}
-
-	s_engineEx->UpdateVideoStream(&src, &dst, nullptr);
 }

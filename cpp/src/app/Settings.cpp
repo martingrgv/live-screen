@@ -17,6 +17,19 @@ namespace
 	constexpr PCWSTR kKeyPath      = L"Path";
 	constexpr PCWSTR kDisplaySection = L"Display";
 	constexpr PCWSTR kKeyFillScreen  = L"FillScreen";
+	constexpr PCWSTR kKeyMultiMonitorMode = L"MultiMonitorMode";
+	constexpr PCWSTR kKeyMonitors         = L"Monitors";
+
+	// Serialized tokens for MultiMonitorMode. Stored as text so the ini stays
+	// human-readable and stable if the enum's underlying values ever change.
+	constexpr PCWSTR kModeSpan     = L"span";
+	constexpr PCWSTR kModeMirror   = L"mirror";
+	constexpr PCWSTR kModePrimary  = L"primary";
+	constexpr PCWSTR kModeSpecific = L"specific";
+
+	// Enabled-monitor device names are joined with '|'. Device names
+	// (\\.\DISPLAYn) never contain that character, so it is a safe delimiter.
+	constexpr wchar_t kMonitorDelimiter = L'|';
 
 	// Resolves %APPDATA%\LiveScreen, creating the directory if it doesn't exist.
 	HRESULT GetConfigDir(std::wstring& out)
@@ -217,6 +230,164 @@ HRESULT SaveFillScreen(bool value)
 
 	PCWSTR text = value ? L"1" : L"0";
 	if (!WritePrivateProfileStringW(kDisplaySection, kKeyFillScreen, text, configPath.c_str()))
+	{
+		return HRESULT_FROM_WIN32(GetLastError());
+	}
+	return S_OK;
+}
+
+HRESULT LoadMultiMonitorMode(MultiMonitorMode& out)
+{
+	std::wstring path;
+	if (HRESULT hr = GetConfigPath(path); FAILED(hr))
+	{
+		return hr;
+	}
+
+	if (!PathFileExistsW(path.c_str()))
+	{
+		return S_FALSE;
+	}
+
+	wchar_t buf[32] = {};
+	DWORD copied = GetPrivateProfileStringW(
+		kDisplaySection,
+		kKeyMultiMonitorMode,
+		L"",
+		buf,
+		ARRAYSIZE(buf),
+		path.c_str());
+
+	if (copied == 0)
+	{
+		return S_FALSE;
+	}
+
+	if (lstrcmpiW(buf, kModeMirror) == 0)
+	{
+		out = MultiMonitorMode::Mirror;
+	}
+	else if (lstrcmpiW(buf, kModePrimary) == 0)
+	{
+		out = MultiMonitorMode::Primary;
+	}
+	else if (lstrcmpiW(buf, kModeSpecific) == 0)
+	{
+		out = MultiMonitorMode::Specific;
+	}
+	else
+	{
+		out = MultiMonitorMode::Span;
+	}
+	return S_OK;
+}
+
+HRESULT SaveMultiMonitorMode(MultiMonitorMode value)
+{
+	std::wstring configPath;
+	if (HRESULT hr = GetConfigPath(configPath); FAILED(hr))
+	{
+		return hr;
+	}
+
+	if (HRESULT hr = EnsureUnicodeIniFile(configPath.c_str()); FAILED(hr))
+	{
+		return hr;
+	}
+
+	PCWSTR text = kModeSpan;
+	switch (value)
+	{
+	case MultiMonitorMode::Mirror:   text = kModeMirror;   break;
+	case MultiMonitorMode::Primary:  text = kModePrimary;  break;
+	case MultiMonitorMode::Specific: text = kModeSpecific; break;
+	case MultiMonitorMode::Span:
+	default:                         text = kModeSpan;     break;
+	}
+
+	if (!WritePrivateProfileStringW(kDisplaySection, kKeyMultiMonitorMode, text, configPath.c_str()))
+	{
+		return HRESULT_FROM_WIN32(GetLastError());
+	}
+	return S_OK;
+}
+
+HRESULT LoadEnabledMonitors(std::vector<std::wstring>& out)
+{
+	out.clear();
+
+	std::wstring path;
+	if (HRESULT hr = GetConfigPath(path); FAILED(hr))
+	{
+		return hr;
+	}
+
+	if (!PathFileExistsW(path.c_str()))
+	{
+		return S_FALSE;
+	}
+
+	// Device-name lists are short; a fixed buffer comfortably holds the
+	// realistic maximum (a few dozen \\.\DISPLAYn tokens).
+	std::wstring buf(1024, L'\0');
+	DWORD copied = GetPrivateProfileStringW(
+		kDisplaySection,
+		kKeyMonitors,
+		L"",
+		buf.data(),
+		static_cast<DWORD>(buf.size()),
+		path.c_str());
+	buf.resize(copied);
+
+	if (buf.empty())
+	{
+		return S_FALSE;
+	}
+
+	size_t start = 0;
+	while (start <= buf.size())
+	{
+		size_t end = buf.find(kMonitorDelimiter, start);
+		std::wstring token = buf.substr(
+			start,
+			(end == std::wstring::npos) ? std::wstring::npos : end - start);
+		if (!token.empty())
+		{
+			out.push_back(token);
+		}
+		if (end == std::wstring::npos)
+		{
+			break;
+		}
+		start = end + 1;
+	}
+	return S_OK;
+}
+
+HRESULT SaveEnabledMonitors(const std::vector<std::wstring>& value)
+{
+	std::wstring configPath;
+	if (HRESULT hr = GetConfigPath(configPath); FAILED(hr))
+	{
+		return hr;
+	}
+
+	if (HRESULT hr = EnsureUnicodeIniFile(configPath.c_str()); FAILED(hr))
+	{
+		return hr;
+	}
+
+	std::wstring joined;
+	for (size_t i = 0; i < value.size(); ++i)
+	{
+		if (i != 0)
+		{
+			joined += kMonitorDelimiter;
+		}
+		joined += value[i];
+	}
+
+	if (!WritePrivateProfileStringW(kDisplaySection, kKeyMonitors, joined.c_str(), configPath.c_str()))
 	{
 		return HRESULT_FROM_WIN32(GetLastError());
 	}
