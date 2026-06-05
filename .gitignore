@@ -107,12 +107,5 @@ x86/
 *.exp
 *.res
 
-# VLC runtime payload shipped next to the build output
-**/plugins/**/*.dll
-**/plugins/**/*.jar
-**/plugins/**/*.lua
-**/libvlc*.dll
-**/libvlc*.lib
-
 # Release bundling scratch directory (produced by .github/prompts/ship-release.prompt.md)
 release-stage/

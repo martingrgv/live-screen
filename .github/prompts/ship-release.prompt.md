@@ -1,6 +1,6 @@
 ---
 mode: agent
-description: Build Live Screen, bundle libvlc + runtime DLLs into a zip, and publish a GitHub pre-release with the asset attached via gh CLI.
+description: Build Live Screen, bundle the runtime DLLs into a zip, and publish a GitHub pre-release with the asset attached via gh CLI.
 ---
 
 # Ship a Live Screen release
@@ -29,12 +29,10 @@ Before doing anything, decide the version tag:
 
 3. **Stage the bundle** at `release-stage\LiveScreen-<tag>-win-x64\` (delete and recreate `release-stage\` each time so old artifacts don't leak in):
    - `LiveScreen.exe` from `cpp\x64\Release\`.
-   - `libvlc.dll` and `libvlccore.dll` from `C:\Program Files\VideoLAN\VLC\`.
-   - The entire `plugins\` folder from `C:\Program Files\VideoLAN\VLC\plugins`. **Do not** prune it — libvlc loads modules dynamically and missing plugins manifest as silent decode/aout failures at runtime.
    - `vcruntime140.dll`, `vcruntime140_1.dll`, `msvcp140.dll` from `C:\Windows\System32\` (the MSVC v145 toolset links the dynamic CRT).
-   - A `README.txt` covering: how to run, where settings are stored (`%APPDATA%\LiveScreen\config.ini`), tray menu items, the LGPL note for libvlc with a link to https://www.videolan.org/legal.html, and a fallback line pointing users to the "Microsoft Visual C++ Redistributable for Visual Studio 2015-2022 (x64)" if `vcruntime` errors appear.
+   - A `README.txt` covering: how to run, where settings are stored (`%APPDATA%\LiveScreen\config.ini`), tray menu items, a note that playback uses Windows' built-in Media Foundation so MP4/MOV (H.264/H.265) work out of the box while exotic containers (MKV/WebM/VP9/AV1) may need a codec from the Microsoft Store, and a fallback line pointing users to the "Microsoft Visual C++ Redistributable for Visual Studio 2015-2022 (x64)" if `vcruntime` errors appear.
 
-4. **Zip it** to `release-stage\LiveScreen-<tag>-win-x64.zip` (`Compress-Archive -Path "...\*" -DestinationPath ... -Force`). Verify the file exists and is non-trivial (>10 MB — the plugins folder alone is ~50 MB).
+4. **Zip it** to `release-stage\LiveScreen-<tag>-win-x64.zip` (`Compress-Archive -Path "...\*" -DestinationPath ... -Force`). Verify the file exists and is non-empty. The bundle is small now — just the `.exe` and the three CRT DLLs (no third-party media runtime) — so expect ~1 MB rather than tens of MB.
 
 5. **Tag and push.**
    - `git tag -a <tag> -m "<tag>"`
@@ -82,7 +80,7 @@ Group bullets by user-visible theme (playback, UI, persistence, performance). Sk
 - Never bundle a sample video (licensing).
 - Never check `release-stage\` or the zip into git.
 - Never amend or rewrite the tag once it is pushed; if you need to retry, bump to the next pre-release number.
-- The bundle target is **x64 only**. The Win32 configs in `LiveScreen.vcxproj` don't link libvlc and must not be shipped.
+- The bundle target is **x64 only**. The Win32 configs in `LiveScreen.vcxproj` are not maintained for shipping.
 
 ## Verify before finishing
 

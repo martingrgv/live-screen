@@ -2,7 +2,7 @@
 
 #include "app/OcclusionWatcher.h"
 #include "app/Settings.h"
-#include "media/VlcPlayer.h"
+#include "media/MediaPlayer.h"
 #include "ui/TrayIcon.h"
 #include "util/Autostart.h"
 #include "util/UniqueHandles.h"
@@ -18,12 +18,6 @@ HWND g_shellDefView  = nullptr;
 HWND g_progman       = nullptr;
 bool g_raisedDesktop = false;
 
-VlcInstance        g_vlc;
-VlcMediaListPlayer g_listPlayer;
-VlcMediaList       g_mediaList;
-VlcMediaPlayer     g_player;
-VlcMedia           g_media;
-
 bool g_muted     = false;
 bool g_autoMuted = false;
 bool g_pauseFullscreen  = false;
@@ -37,7 +31,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 	switch (uMsg)
 	{
 	case WM_ERASEBKGND:
-		// VLC paints the entire client area; skip background erase to avoid a white flash.
+		// The media engine paints the entire client area; skip background erase to avoid a white flash.
 		return 1;
 
 	case WM_DESTROY:
@@ -47,7 +41,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 		// after the message loop exits.
 		WTSUnRegisterSessionNotification(hwnd);
 
-		ShutdownVlc();
+		ShutdownPlayer();
 
 		// Force the desktop layer to repaint where our child window used to be,
 		// otherwise stale pixels stay on screen.

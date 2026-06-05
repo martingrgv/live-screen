@@ -1,7 +1,7 @@
 #include "ui/TrayIcon.h"
 
 #include "app/Settings.h"
-#include "media/VlcPlayer.h"
+#include "media/MediaPlayer.h"
 #include "util/UniqueHandles.h"
 
 #include "res/Resource.h"

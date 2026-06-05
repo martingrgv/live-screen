@@ -57,7 +57,7 @@
     <ClCompile Include="src\app\Settings.cpp">
       <Filter>Source Files\app</Filter>
     </ClCompile>
-    <ClCompile Include="src\media\VlcPlayer.cpp">
+    <ClCompile Include="src\media\MediaPlayer.cpp">
       <Filter>Source Files\media</Filter>
     </ClCompile>
     <ClCompile Include="src\ui\TrayIcon.cpp">
@@ -83,10 +83,7 @@
     <ClInclude Include="src\app\Settings.h">
       <Filter>Header Files\app</Filter>
     </ClInclude>
-    <ClInclude Include="src\media\VlcHandles.h">
-      <Filter>Header Files\media</Filter>
-    </ClInclude>
-    <ClInclude Include="src\media\VlcPlayer.h">
+    <ClInclude Include="src\media\MediaPlayer.h">
       <Filter>Header Files\media</Filter>
     </ClInclude>
     <ClInclude Include="src\ui\TrayIcon.h">

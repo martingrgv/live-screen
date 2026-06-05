@@ -1,7 +1,7 @@
 #include "app/OcclusionWatcher.h"
 
 #include "app/App.h"
-#include "media/VlcPlayer.h"
+#include "media/MediaPlayer.h"
 
 #include <shellapi.h>
 #include <shlobj.h>
@@ -200,7 +200,7 @@ void StopOcclusionWatcher()
 	}
 	g_appHwnd = nullptr;
 
-	// Clear auto-mute / auto-pause and re-apply so we leave libvlc consistent
+	// Clear auto-mute / auto-pause and re-apply so we leave playback consistent
 	// with the user's manual preferences only. The Apply* helpers no-op if the
 	// player is already torn down.
 	if (g_autoMuted)

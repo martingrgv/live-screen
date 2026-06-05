@@ -2,15 +2,15 @@
 
 #include <windows.h>
 
-// Watches the foreground window and auto-mutes libvlc audio while any
+// Watches the foreground window and auto-mutes playback audio while any
 // non-shell window is focused. Unmutes when the desktop / shell is focused.
 // The user's manual mute (`g_muted`) still wins — auto-mute can only
 // add muting on top of it, never override it to "unmuted".
 //
 // Additionally maintains `g_pauseFullscreen` (set when a non-shell foreground
 // window covers an entire monitor, or when the shell reports a D3D fullscreen
-// / presentation app is running) and calls `ApplyEffectivePause` to pause the
-// libvlc playlist whenever any pause reason is active.
+// / presentation app is running) and calls `ApplyEffectivePause` to pause
+// playback whenever any pause reason is active.
 //
 // Driven by SetWinEventHook on EVENT_SYSTEM_FOREGROUND,
 // EVENT_SYSTEM_MINIMIZESTART/END and EVENT_SYSTEM_MOVESIZEEND
@@ -30,5 +30,5 @@ void RecheckPresence();
 
 // Pause iff any of g_pauseFullscreen / g_pauseDisplayOff / g_pauseSessionLock
 // is set; otherwise resume. Idempotent (mirrors state via g_autoPaused).
-// Safe to call before InitVlc — VlcPlayer's Pause/Resume helpers no-op then.
+// Safe to call before InitPlayer — MediaPlayer's Pause/Resume helpers no-op then.
 void ApplyEffectivePause();

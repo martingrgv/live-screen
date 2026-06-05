@@ -107,14 +107,11 @@
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>$(ProjectDir)src;$(ProjectDir);D:\development\sdks\vlc\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)src;$(ProjectDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>libvlc.lib;
-libvlccore.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <AdditionalLibraryDirectories>D:\development\sdks\vlc\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -126,14 +123,11 @@ libvlccore.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>$(ProjectDir)src;$(ProjectDir);D:\development\sdks\vlc\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)src;$(ProjectDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalLibraryDirectories>D:\development\sdks\vlc\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>libvlc.lib;
-libvlccore.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
@@ -141,7 +135,7 @@ libvlccore.lib;%(AdditionalDependencies)</AdditionalDependencies>
     <ClCompile Include="src\app\App.cpp" />
     <ClCompile Include="src\app\OcclusionWatcher.cpp" />
     <ClCompile Include="src\app\Settings.cpp" />
-    <ClCompile Include="src\media\VlcPlayer.cpp" />
+    <ClCompile Include="src\media\MediaPlayer.cpp" />
     <ClCompile Include="src\ui\TrayIcon.cpp" />
     <ClCompile Include="src\util\Autostart.cpp" />
     <ClCompile Include="src\util\Utf8.cpp" />
@@ -151,8 +145,7 @@ libvlccore.lib;%(AdditionalDependencies)</AdditionalDependencies>
     <ClInclude Include="src\app\App.h" />
     <ClInclude Include="src\app\OcclusionWatcher.h" />
     <ClInclude Include="src\app\Settings.h" />
-    <ClInclude Include="src\media\VlcHandles.h" />
-    <ClInclude Include="src\media\VlcPlayer.h" />
+    <ClInclude Include="src\media\MediaPlayer.h" />
     <ClInclude Include="src\ui\TrayIcon.h" />
     <ClInclude Include="src\util\Autostart.h" />
     <ClInclude Include="src\util\ComApartment.h" />

@@ -4,7 +4,7 @@
 //   * Win32 init (COM, DPI awareness, window class, window).
 //   * Desktop hooking via DesktopHost.
 //   * Tray icon registration via TrayIcon (RAII).
-//   * libvlc lifecycle via VlcPlayer.
+//   * Media Foundation playback lifecycle via MediaPlayer.
 //   * Standard message loop.
 //
 // All real work lives in the modules under src/.
@@ -22,7 +22,7 @@
 #include "app/App.h"
 #include "app/OcclusionWatcher.h"
 #include "app/Settings.h"
-#include "media/VlcPlayer.h"
+#include "media/MediaPlayer.h"
 #include "ui/TrayIcon.h"
 #include "util/ComApartment.h"
 #include "win/DesktopHost.h"
@@ -193,7 +193,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR /*pCmdLine*/, int /*nC
 
 	TrayIcon tray(hwnd, WM_TRAYICON, L"Live Screen");
 
-	// Load persisted display preferences before InitVlc so the first frame is
+	// Load persisted display preferences before InitPlayer so the first frame is
 	// already rendered with the correct crop (no flash of letterboxed video).
 	{
 		bool fill = true;
@@ -228,8 +228,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR /*pCmdLine*/, int /*nC
 		SaveWallpaperPath(wallpaperPath.c_str());
 	}
 
-	HRESULT hrVlc = InitVlc(hwnd, wallpaperPath.c_str());
-	if (FAILED(hrVlc))
+	HRESULT hrPlayer = InitPlayer(hwnd, wallpaperPath.c_str());
+	if (FAILED(hrPlayer))
 	{
 		return 0;
 	}
@@ -237,7 +237,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR /*pCmdLine*/, int /*nC
 	ShowWindow(hwnd, SW_SHOWNA);
 
 	// Subscribe to display-power and system-suspend notifications so we can
-	// pause libvlc when the screen is off / dimmed or the machine is sleeping.
+	// pause playback when the screen is off / dimmed or the machine is sleeping.
 	// GUID_CONSOLE_DISPLAY_STATE is Win8+ and finer-grained (on / off / dim);
 	// GUID_MONITOR_POWER_ON is the legacy fallback.
 	HPOWERNOTIFY displayPowerNotify = RegisterPowerSettingNotification(
@@ -249,7 +249,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR /*pCmdLine*/, int /*nC
 	// workstation is locked or the RDP session is disconnected.
 	WTSRegisterSessionNotification(hwnd, NOTIFY_FOR_THIS_SESSION);
 
-	// Pause libvlc whenever a fullscreen / occluding app is in the foreground,
+	// Pause playback whenever a fullscreen / occluding app is in the foreground,
 	// so the wallpaper stops burning GPU/CPU under a game or video player.
 	StartOcclusionWatcher(hwnd);
 
