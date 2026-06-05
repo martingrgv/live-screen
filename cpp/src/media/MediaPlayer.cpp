@@ -246,19 +246,43 @@ namespace
 		inst.engineEx->UpdateVideoStream(&src, &dst, nullptr);
 	}
 
-	void ApplyMuteToInstance(EngineInstance& inst)
+	// Applies mute to one instance. Only the designated audio instance follows
+	// the user's mute preference; every other instance is force-muted so audio
+	// isn't duplicated across monitors.
+	void ApplyMuteToInstance(EngineInstance& inst, bool isAudio)
 	{
 		if (!inst.engine)
 		{
 			return;
 		}
-		const BOOL desired = (g_muted || g_autoMuted) ? TRUE : FALSE;
+		const BOOL desired = (!isAudio || g_muted || g_autoMuted) ? TRUE : FALSE;
 		if (inst.lastMuteApplied == static_cast<int>(desired))
 		{
 			return;
 		}
 		inst.engine->SetMuted(desired);
 		inst.lastMuteApplied = desired;
+	}
+
+	// Chooses which engine is allowed to play audio: the one on the primary
+	// monitor, or the first engine when the primary monitor has no wallpaper
+	// (e.g. Specific mode with the primary disabled).
+	size_t PickAudioInstance()
+	{
+		for (size_t i = 0; i < s_engines.size(); ++i)
+		{
+			if (!s_engines[i] || !s_engines[i]->hwnd)
+			{
+				continue;
+			}
+			HMONITOR mon = MonitorFromWindow(s_engines[i]->hwnd, MONITOR_DEFAULTTONEAREST);
+			MONITORINFO mi{ sizeof(mi) };
+			if (mon && GetMonitorInfo(mon, &mi) && (mi.dwFlags & MONITORINFOF_PRIMARY))
+			{
+				return i;
+			}
+		}
+		return 0;
 	}
 
 	void OnEngineEvent(EngineInstance* inst, DWORD event)
@@ -483,11 +507,12 @@ void ResumeWallpaper()
 
 void ApplyEffectiveMute()
 {
-	for (auto& inst : s_engines)
+	const size_t audio = PickAudioInstance();
+	for (size_t i = 0; i < s_engines.size(); ++i)
 	{
-		if (inst)
+		if (s_engines[i])
 		{
-			ApplyMuteToInstance(*inst);
+			ApplyMuteToInstance(*s_engines[i], i == audio);
 		}
 	}
 }
